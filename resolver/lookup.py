@@ -367,6 +367,12 @@ def describe(action: dict) -> str:
         "toggle_fullscreen": "Toggle fullscreen",
         "take_screenshot": "Take screenshot",
         "lock_screen": "Lock screen",
+        "play_pause_media": "Play / pause media",
+        "next_track": "Next track",
+        "previous_track": "Previous track",
+        "volume_up": "Volume up",
+        "volume_down": "Volume down",
+        "toggle_mute": "Toggle mute",
     }
     base = labels.get(t, t)
     if t in ("open_app", "focus_app"):

@@ -21,6 +21,9 @@ DEFAULT_CONFIG = {
         "timeout_secs": 120,
     },
     "confirm_low": False,      # low-risk actions execute directly, no confirmation
+    "media": {
+        "music_app": "omarchy launch spotify",  # conventional Omarchy launcher for no-player fallback
+    },
     "min_confidence": 0.6,     # below this the action is rejected as unclear
     "ai": {
         "enabled": True,          # local AI intent layer (pi RPC) for rule-miss phrases

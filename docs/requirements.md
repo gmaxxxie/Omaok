@@ -264,7 +264,7 @@ interface STTProvider {
 
 ```json
 {
-  "type": "open_app | focus_app | open_file | open_folder | close_active_window | switch_workspace | move_active_window_to_workspace | toggle_fullscreen | take_screenshot | lock_screen",
+  "type": "open_app | focus_app | open_file | open_folder | close_active_window | switch_workspace | move_active_window_to_workspace | toggle_fullscreen | take_screenshot | lock_screen | play_pause_media | next_track | previous_track | volume_up | volume_down | toggle_mute",
   "target": {},
   "confidence": 0.0,
   "risk": "low | confirm_required",
@@ -379,3 +379,4 @@ omarchy-voice-control/
 - **ADR-008（2026-09-03）**：AI 意图层已实现并实测。`intent/ai.py`：spawn `pi --mode rpc --no-session` → `set_thinking_level off`（非思考提速，实测 ~5s）→ `prompt`（含 catalog 摘要 + 安全约束）→ 等 `agent_settled` → `get_last_assistant_text` → JSON 抽取/校验（白名单 + confidence 钳位，拒绝 shell）。CLI 流程：规则先匹配 → 命中且可解析即走（source=rule，秒级）；规则未命中**或规则命中但解析失败**（如转写乱码）→ AI（source=future_llm）→ 同一 resolver/policy/确认关卡。UI 动作行显示 `Action · AI` 标签。ai 配置段 `{enabled, backend=pi-rpc, thinking=off, model=null, timeout_secs=60}`；pi 缺失/超时时优雅降级为“Could not understand”。另修：`xdg-open` 在本机挂 Tracker3 导致超时 → open_file/open_folder 改用 `gio open`（glib，0.01s）。
 - **ADR-009（2026-09-03）**：低风险动作**默认免确认、直接执行**（`confirm_low=false`）；`confirm_required`（close_active_window / toggle_fullscreen / lock_screen）仍必须显式确认。规则/AI 命中后，低风险自动走 executing→result（结果在弹窗展示，成功消息用可读描述如 “Switch workspace: workspace 2”）；高风险停在 awaiting_confirm 等用户确认。安全：风险分级与白名单不变。
 - **ADR-010（2026-09-03）**：新增**路径 blocklist**（`config/blocklist.json`）：隐藏（点开头）条目 + 敏感路径段/文件名（`.ssh/.gnupg/.config/.cache/.local/.pki/.npm/.cargo`、agent auth、浏览器数据、keyring、密钥/证书文件等）禁止被 `open_file`/`open_folder` 访问，规则与 AI 来源同等生效。三层执行：resolver 不返回/搜索剪枝 → policy 拒决 → executor 拒绝。用户可用 `~/.config/omarchy/voice-control/blocklist.json` 扩展；`omarchy-voice-control blocklist` 查看。60 单测全绿。
+- **ADR-011（2026-09-03）**：新增 6 个媒体/音量动作（`play_pause_media/next_track/previous_track/volume_up/volume_down/toggle_mute`，均低风险自动执行），**优先调用 Omarchy 常规命令**：媒体控制走 `omarchy-shell media playPause|next|previous`（first-party MPRIS 服务，已启用 omarchy.media）；音量/静音走 `omarchy audio output volume raise|lower|mute-toggle`（带 OSD）。执行器按 `omarchy-shell media status` 门控（canTogglePlaying/canGoNext/canGoPrevious）：无播放器时经 `media.music_app`（默认 `omarchy launch spotify`，常规启动器，分离式启动+3s 短轮询）自动开音乐应用；有播放器但无曲目时诚实提示“nothing is playing yet”。66 单测全绿。

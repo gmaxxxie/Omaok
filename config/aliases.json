@@ -14,7 +14,9 @@
     "nautilus": "nautilus",
     "obsidian": "obsidian",
     "notes": "obsidian",
-    "obsidian笔记": "obsidian"
+    "obsidian笔记": "obsidian",
+    "spotify": "omarchy launch spotify",
+    "音乐": "omarchy launch spotify"
   },
   "folders": {
     "downloads": "~/Downloads",

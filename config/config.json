@@ -6,6 +6,9 @@
     "timeout_secs": 120
   },
   "confirm_low": false,
+  "media": {
+    "music_app": "omarchy launch spotify"
+  },
   "min_confidence": 0.6,
   "ai": {
     "enabled": true,

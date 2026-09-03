@@ -39,6 +39,12 @@ ACTION_DESCRIPTIONS = {
     "toggle_fullscreen": "Toggle fullscreen on the active window",
     "take_screenshot": "Take a fullscreen screenshot and save it",
     "lock_screen": "Lock the screen",
+    "play_pause_media": "Play or pause the current media (music)",
+    "next_track": "Skip to the next track",
+    "previous_track": "Go to the previous track",
+    "volume_up": "Raise the output volume",
+    "volume_down": "Lower the output volume",
+    "toggle_mute": "Toggle output mute",
 }
 
 _HYPRLAND_DISPATCHERS = [

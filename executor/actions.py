@@ -23,9 +23,41 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import time
 
 from config import blocklist as blocklist_mod
 from config import settings
+
+# Media transport via the first-party omarchy.media service (MPRIS controller).
+
+# Volume/mute via omarchy audio (shows the OSD).
+_VOLUME_ACTIONS = {
+    "volume_up": ["omarchy", "audio", "output", "volume", "raise"],
+    "volume_down": ["omarchy", "audio", "output", "volume", "lower"],
+    "toggle_mute": ["omarchy", "audio", "output", "volume", "mute-toggle"],
+}
+
+
+def _launch_detached_cmd(command: str) -> None:
+    """Launch a config-supplied command without waiting (never blocks).
+    The command comes from user config (media.music_app), not from voice/AI.
+    Split into argv via shlex — never through a shell."""
+    if not command or not command.strip():
+        return
+    import shlex
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return
+    if not argv:
+        return
+    try:
+        subprocess.Popen(
+            argv, start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
 
 
 def _run(args, timeout=15):
@@ -102,6 +134,59 @@ def _launch_or_focus(target: dict) -> tuple:
     return _hypr_dispatch("hl.dsp.exec_cmd(%s)" % _lua_str(command))
 
 
+def _media_status() -> dict | None:
+    """Parsed omarchy.media status (hasPlayer / canTogglePlaying / canGoNext ...)."""
+    ok, out = _run(["omarchy-shell", "media", "status"], timeout=10)
+    if not ok:
+        return None
+    try:
+        data = json.loads(out)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _media_play_pause(cfg: dict) -> tuple:
+    status = _media_status()
+    if status and status.get("canTogglePlaying"):
+        ok, out = _run(["omarchy-shell", "media", "playPause"], timeout=10)
+        return (ok, out or "ok") if ok else (False, out)
+    if status and status.get("hasPlayer"):
+        # A player is open but has no playable track yet.
+        return True, "media player is open but nothing is playing yet"
+    # No player at all: launch the configured music app (conventional launcher).
+    music_app = (cfg.get("media") or {}).get("music_app", "omarchy launch spotify")
+    if music_app.strip():
+        _launch_detached_cmd(music_app)
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        time.sleep(1.0)
+        s = _media_status()
+        if s and s.get("canTogglePlaying"):
+            ok, out = _run(["omarchy-shell", "media", "playPause"], timeout=10)
+            return True, "launched music app and started playback"
+    if music_app.strip():
+        return True, "launched music app (nothing playing yet)"
+    return False, "no media player available"
+
+
+def _media_skip(direction: str, want: str) -> tuple:
+    status = _media_status()
+    if status and status.get(want):
+        ok, out = _run(["omarchy-shell", "media", direction], timeout=10)
+        return (ok, out or "ok") if ok else (False, out)
+    return False, "no active track to skip"
+
+
+def _media(action_type: str, cfg: dict) -> tuple:
+    """Control the active MPRIS player via omarchy.media (conventional, generic)."""
+    if action_type == "play_pause_media":
+        return _media_play_pause(cfg)
+    if action_type == "next_track":
+        return _media_skip("next", "canGoNext")
+    return _media_skip("previous", "canGoPrevious")
+
+
 def execute(action: dict, cfg: dict) -> tuple:
     """Run a fully parsed + confirmed Action. Returns (ok, message)."""
     action_type = action.get("type", "")
@@ -109,6 +194,12 @@ def execute(action: dict, cfg: dict) -> tuple:
 
     if action_type in ("open_app", "focus_app"):
         return _launch_or_focus(target)
+
+    if action_type in ("play_pause_media", "next_track", "previous_track"):
+        return _media(action_type, cfg)
+
+    if action_type in _VOLUME_ACTIONS:
+        return _run(_VOLUME_ACTIONS[action_type], timeout=15)
 
     if action_type == "open_file":
         return _open_path(target.get("path", ""))

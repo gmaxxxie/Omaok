@@ -6,6 +6,7 @@ Run:  python3 -m unittest discover -s tests -v
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -57,6 +58,22 @@ class TestIntent(unittest.TestCase):
     def test_focus_app(self):
         self.assertEqual(rules.parse("聚焦终端")["type"], "focus_app")
         self.assertEqual(rules.parse("focus terminal")["type"], "focus_app")
+
+    def test_media_actions(self):
+        for phrase in ("播放音乐", "放首歌", "开始播放", "暂停音乐", "暂停", "play music", "pause"):
+            self.assertEqual(rules.parse(phrase)["type"], "play_pause_media", phrase)
+        self.assertEqual(rules.parse("下一首")["type"], "next_track")
+        self.assertEqual(rules.parse("切歌")["type"], "next_track")
+        self.assertEqual(rules.parse("next")["type"], "next_track")
+        self.assertEqual(rules.parse("上一首")["type"], "previous_track")
+        self.assertEqual(rules.parse("previous")["type"], "previous_track")
+        self.assertEqual(rules.parse("调大音量")["type"], "volume_up")
+        self.assertEqual(rules.parse("大声点")["type"], "volume_up")
+        self.assertEqual(rules.parse("volume up")["type"], "volume_up")
+        self.assertEqual(rules.parse("调小音量")["type"], "volume_down")
+        self.assertEqual(rules.parse("小声点")["type"], "volume_down")
+        self.assertEqual(rules.parse("静音")["type"], "toggle_mute")
+        self.assertEqual(rules.parse("mute")["type"], "toggle_mute")
 
     def test_unclear(self):
         self.assertIsNone(rules.parse("今天天气怎么样"))
@@ -122,6 +139,9 @@ class TestPolicy(unittest.TestCase):
         self.assertEqual(policy.classify({"type": "close_active_window", "confidence": 0.9}, CFG)["risk"], "confirm_required")
         self.assertEqual(policy.classify({"type": "toggle_fullscreen", "confidence": 0.9}, CFG)["risk"], "confirm_required")
         self.assertEqual(policy.classify({"type": "open_app", "confidence": 0.9}, CFG)["risk"], "low")
+        # media/volume are low risk -> auto-execute
+        self.assertEqual(policy.classify({"type": "play_pause_media", "confidence": 0.9}, CFG)["risk"], "low")
+        self.assertEqual(policy.classify({"type": "volume_up", "confidence": 0.9}, CFG)["risk"], "low")
         # low confidence forces confirm_required
         self.assertEqual(policy.classify({"type": "open_app", "confidence": 0.3}, CFG)["risk"], "confirm_required")
 
@@ -135,6 +155,56 @@ class TestPolicy(unittest.TestCase):
         v = policy.verdict({"type": "evil", "confidence": 0.9}, CFG)
         self.assertFalse(v["allowed"])
         self.assertIn("not allowed", v["reason"])
+
+
+class TestMediaExecutor(unittest.TestCase):
+    def test_media_play_pause_uses_status_gate(self):
+        from executor import actions
+        with mock.patch.object(actions, "_media_status", return_value={"canTogglePlaying": True, "hasPlayer": True}), \
+             mock.patch.object(actions, "_run", return_value=(True, "ok")) as run:
+            ok, msg = actions.execute({"type": "play_pause_media", "target": {}}, CFG)
+            self.assertTrue(ok)
+            self.assertEqual(run.call_args_list[-1][0][0], ["omarchy-shell", "media", "playPause"])
+
+    def test_media_skip_needs_can_go(self):
+        from executor import actions
+        with mock.patch.object(actions, "_media_status", return_value={"canGoNext": False, "hasPlayer": True}), \
+             mock.patch.object(actions, "_run") as run:
+            ok, msg = actions.execute({"type": "next_track", "target": {}}, CFG)
+            self.assertFalse(ok)
+            run.assert_not_called()
+
+    def test_volume_maps_to_omarchy_audio(self):
+        from executor import actions
+        with mock.patch.object(actions, "_run", return_value=(True, "ok")) as run:
+            ok, msg = actions.execute({"type": "volume_up", "target": {}}, CFG)
+            self.assertTrue(ok)
+            self.assertEqual(run.call_args[0][0][:2], ["omarchy", "audio"])
+
+    def test_play_pause_launches_music_app_when_no_player(self):
+        from executor import actions
+        def fake_status():
+            fake_status.calls += 1
+            return {"canTogglePlaying": False, "hasPlayer": False}  # never becomes playable
+        fake_status.calls = 0
+        with mock.patch.object(actions, "_media_status", side_effect=fake_status), \
+             mock.patch.object(actions, "_launch_detached_cmd") as launch, \
+             mock.patch.object(actions.time, "sleep"):
+            ok, msg = actions.execute({"type": "play_pause_media", "target": {}}, CFG)
+            self.assertTrue(ok)
+            launch.assert_called_once_with("omarchy launch spotify")
+            self.assertIn("launched music app", msg)
+
+    def test_play_pause_reports_idle_player_honestly(self):
+        from executor import actions
+        with mock.patch.object(actions, "_media_status", return_value={"hasPlayer": True, "canTogglePlaying": False}), \
+             mock.patch.object(actions, "_launch_detached_cmd") as launch, \
+             mock.patch.object(actions, "_run") as run:
+            ok, msg = actions.execute({"type": "play_pause_media", "target": {}}, CFG)
+            self.assertTrue(ok)
+            self.assertIn("nothing is playing", msg)
+            launch.assert_not_called()
+            run.assert_not_called()
 
 
 if __name__ == "__main__":
