@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 
+from config import blocklist as blocklist_mod
 from config import settings
 
 _DESKTOP_DIRS = [
@@ -183,6 +184,11 @@ def _clean_target_name(name: str) -> str:
     return n
 
 
+def _blocked(path: str) -> bool:
+    """Sensitive path? Hidden entries and blocklisted segments/names are never opened."""
+    return blocklist_mod.is_blocked_path(path)
+
+
 def _resolve_folder(name: str, aliases: dict, cfg: dict, strong_only: bool = False) -> dict | None:
     """Resolve a folder alias or a path under the allow-listed roots."""
     lowered = (name or "").strip()
@@ -194,11 +200,11 @@ def _resolve_folder(name: str, aliases: dict, cfg: dict, strong_only: bool = Fal
         alias = (aliases.get("folders") or {}).get(key)
         if alias:
             path = settings.expand_path(alias)
-            if os.path.isdir(path):
+            if os.path.isdir(path) and not _blocked(path):
                 return {"kind": "folder", "path": path, "name": name}
     # Literal path (relative to HOME) that exists
     candidate = settings.expand_path(lowered)
-    if os.path.isdir(candidate) and _under_roots(candidate, cfg):
+    if os.path.isdir(candidate) and _under_roots(candidate, cfg) and not _blocked(candidate):
         return {"kind": "folder", "path": os.path.normpath(candidate), "name": name}
     # Substring search over roots; only strong (exact/prefix) matches when asked
     needle = cleaned
@@ -206,6 +212,8 @@ def _resolve_folder(name: str, aliases: dict, cfg: dict, strong_only: bool = Fal
     best_score = None
     for root in _search_roots(cfg.get("paths", {}).get("roots", ["~"])):
         for base, dirs, _files in os.walk(root):
+            # Prune hidden/blocked directories entirely (privacy + speed).
+            dirs[:] = [d for d in dirs if not _blocked(os.path.join(base, d))]
             for d in dirs:
                 if not needle or needle in d.lower():
                     full = os.path.join(base, d)
@@ -228,16 +236,17 @@ def _resolve_file(name: str, aliases: dict, cfg: dict, strong_only: bool = False
         alias = (aliases.get("files") or {}).get(key)
         if alias:
             path = settings.expand_path(alias)
-            if os.path.isfile(path):
+            if os.path.isfile(path) and not _blocked(path):
                 return {"kind": "file", "path": path, "name": name}
     candidate = settings.expand_path(lowered)
-    if os.path.isfile(candidate) and _under_roots(candidate, cfg):
+    if os.path.isfile(candidate) and _under_roots(candidate, cfg) and not _blocked(candidate):
         return {"kind": "file", "path": os.path.normpath(candidate), "name": name}
     needle = cleaned
     best = None
     best_score = None
     for root in _search_roots(cfg.get("paths", {}).get("roots", ["~"])):
         for base, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if not _blocked(os.path.join(base, d))]
             for f in files:
                 if not needle or needle in f.lower():
                     full = os.path.join(base, f)
@@ -246,7 +255,7 @@ def _resolve_file(name: str, aliases: dict, cfg: dict, strong_only: bool = False
                         best, best_score = full, score
             if len(dirs) > 200:
                 dirs[:] = []
-    if best:
+    if best and not _blocked(best):
         return {"kind": "file", "path": best, "name": name}
     return None
 

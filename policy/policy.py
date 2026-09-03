@@ -7,6 +7,7 @@ pass explicit user confirmation before the executor runs.
 
 from __future__ import annotations
 
+from config import blocklist as blocklist_mod
 from intent import rules
 
 # Types that are destructive, irreversible, or have global side effects.
@@ -49,4 +50,10 @@ def verdict(action: dict, cfg: dict) -> dict:
         return {"allowed": False, "reason": "action type not allowed: %s" % action_type}
     if float(action.get("confidence", 1.0)) < float(cfg.get("min_confidence", 0.6)):
         return {"allowed": False, "reason": "low confidence; could not resolve target safely"}
+    # Blocked-path guard: no source (rule or AI) may open sensitive locations.
+    target = action.get("target") or {}
+    if action_type in ("open_file", "open_folder"):
+        path = target.get("path")
+        if path and blocklist_mod.is_blocked_path(path):
+            return {"allowed": False, "reason": "target path is blocked by policy"}
     return {"allowed": True, "confirm": requires_confirm(action, cfg)}

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "block_hidden": true,
+  "description": "Paths the voice assistant must never open (open_file / open_folder), regardless of rule or AI source. block_hidden=true blocks every dot-prefixed entry (covers .ssh/.config/.cache/.local/.pki/.npm/.cargo, agent dirs, dotfiles, bash history, ...). segments/file_names add defense-in-depth for non-hidden sensitive names.",
+  "segments": [
+    ".ssh", ".gnupg", ".config", ".cache", ".local", ".pki", ".npm", ".cargo",
+    ".aws", ".azure", ".gcloud", ".docker", ".kube", ".gnome", ".mozilla",
+    ".thunderbird", ".wine", ".var", ".password-store", ".vault", ".vaults",
+    ".bundle", ".gradle", ".m2", ".ivy2", ".sbt", ".venv", ".env",
+    ".conda", ".virtualenvs", ".rustup", ".cargo-registry", ".dotnet",
+    ".nix", ".npmrc", ".pypirc", ".docker", "keyring", "secrets", "passwords",
+    "credentials", "backup-keys", "mihomo-backup"
+  ],
+  "file_names": [
+    "auth.json", "credentials", ".netrc", ".git-credentials", ".npmrc",
+    "id_rsa", "id_rsa.pub", "id_dsa", "id_ecdsa", "id_ed25519", "id_ed25519.pub",
+    "*.key", "*.pem", "*.p12", "*.pfx", "*.asc", "*.gpg", "*.kdbx",
+    ".bash_history", ".zsh_history", ".history"
+  ]
+}

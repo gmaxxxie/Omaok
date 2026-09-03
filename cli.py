@@ -9,6 +9,7 @@ Subcommands:
   cancel-action          Clear the pending Action
   refresh-provider       Re-probe Voxtype status into state.json
   catalog                Generate the machine command catalog (config/catalog.json)
+  blocklist              Print the effective path blocklist
   check                  Print provider status as JSON
   test transcribe <wav>  Print what Voxtype returns for a file (no execution)
 """
@@ -24,6 +25,7 @@ _ROOT = os.path.dirname(os.path.abspath(__file__))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+from config import blocklist as blocklist_mod  # noqa: E402
 from config import catalog as catalog_mod  # noqa: E402
 from config import settings  # noqa: E402
 from executor import actions as executor  # noqa: E402
@@ -247,6 +249,11 @@ def cmd_refresh_provider() -> int:
     return 0
 
 
+def cmd_blocklist() -> int:
+    print(json.dumps(blocklist_mod.load_blocklist(), ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_catalog() -> int:
     cfg, _aliases = _load()
     try:
@@ -300,6 +307,8 @@ def main(argv=None) -> int:
         return cmd_refresh_provider()
     if command == "catalog":
         return cmd_catalog()
+    if command == "blocklist":
+        return cmd_blocklist()
     if command == "check":
         return cmd_check()
     if command == "test" and len(argv) > 2 and argv[1] == "transcribe":

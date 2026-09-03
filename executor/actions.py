@@ -24,6 +24,7 @@ import json
 import re
 import subprocess
 
+from config import blocklist as blocklist_mod
 from config import settings
 
 
@@ -74,7 +75,10 @@ def _open_path(path: str) -> tuple:
 
     `xdg-open` hangs on Tracker3 on this machine, so prefer `gio open` (GLib),
     falling back to xdg-open only if gio is unavailable.
+    Blocked (sensitive) paths are refused outright — final safety layer.
     """
+    if blocklist_mod.is_blocked_path(path):
+        return False, "blocked by policy: path is not allowed"
     import shutil
     if shutil.which("gio"):
         return _run(["gio", "open", path], timeout=15)

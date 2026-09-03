@@ -207,7 +207,7 @@ interface STTProvider {
 ## 7. 解析器需求（`resolver/`）
 
 - **应用查找**：从应用名/别名解析到可执行或 `.desktop`（读取系统与用户 `applications` 目录、`hyprctl clients -j` 的 `class`）；支持「打开」与「聚焦（已在运行则 focus，否则 launch）」两种语义。
-- **文件/文件夹查找**：基于家目录与已配置路径（`~/`, `~/下载`, `~/文档`, `~/项目`, XDG 用户目录）做前缀/子串匹配；安全边界：只解析到允许访问的目录（避免任意路径遍历执行）。
+- **文件/文件夹查找**：基于家目录与已配置路径（`~/`, `~/下载`, `~/文档`, `~/项目`, XDG 用户目录）做前缀/子串匹配；安全边界：只解析到允许访问的目录（避免任意路径遍历执行）。**blocklist 拦截**：所有隐藏（点开头）条目与敏感路径段/文件名（`.ssh/.gnupg/.config/.cache/.local/.pki/.npm/.cargo`、agent auth、浏览器数据、keyring、密钥/证书文件等，见 `config/blocklist.json`）一律不解析、不搜索（os.walk 剪枝），规则与 AI 来源同等生效。
 - **活动窗口与工作区**：读 `hyprctl activewindow -j` / `workspaces -j`，支持「当前窗口/工作区」相对指令与绝对编号。
 - 解析结果写入 `Action.target`；解析失败 → `low confidence` + 提示，**不执行**。
 
@@ -216,6 +216,7 @@ interface STTProvider {
 ## 8. 策略需求（`policy/`）
 
 - **允许清单**：`Action.type` 只允许第 11 章枚举的 10 类。类型不在白名单 → 拒绝。
+- **路径 blocklist**：`open_file`/`open_folder` 的目标路径命中隐藏条目或敏感路径段/文件名（`config/blocklist.json`，可用 `~/.config/omarchy/voice-control/blocklist.json` 扩展）→ **拒绝**。三层执行：resolver 不返回、policy 拒决、executor 拒绝（`omarchy-voice-control blocklist` 可查看生效规则）。
 - **风险分级**：
   - `low`：无破坏性/可逆/常规（open_app、open_file、open_folder、switch_workspace、take_screenshot、focus_app、move_active_window_to_workspace(默认)）。
   - `confirm_required`：有副作用/不可逆/影响全局（close_active_window、toggle_fullscreen、lock_screen；以及任何目标解析置信度低于阈值、或目标越权/特殊路径的动作）。
@@ -377,3 +378,4 @@ omarchy-voice-control/
 - **ADR-007（2026-09-03）**：AI 意图层后端选定 **pi RPC mode**（`pi --mode rpc --no-session`，JSON-RPC over stdio，官方文档含 Python 客户端示例），本机实测可用（默认模型 deepseek-v4-flash，1M 上下文）。已建 `config/catalog.py` 生成机器命令目录（`~/.config/omarchy/voice-control/catalog.json`：356 条 omarchy 命令 + 118 个应用 + 10 类动作 + hl.dsp.* dispatcher）作为 AI grounding。**安全不变式**：AI 只输出严格结构化 Action JSON，不产生可执行 shell；仍走 policy + 人工确认关卡；规则匹配（毫秒级）优先，AI 仅作规则未命中时的增强理解层。
 - **ADR-008（2026-09-03）**：AI 意图层已实现并实测。`intent/ai.py`：spawn `pi --mode rpc --no-session` → `set_thinking_level off`（非思考提速，实测 ~5s）→ `prompt`（含 catalog 摘要 + 安全约束）→ 等 `agent_settled` → `get_last_assistant_text` → JSON 抽取/校验（白名单 + confidence 钳位，拒绝 shell）。CLI 流程：规则先匹配 → 命中且可解析即走（source=rule，秒级）；规则未命中**或规则命中但解析失败**（如转写乱码）→ AI（source=future_llm）→ 同一 resolver/policy/确认关卡。UI 动作行显示 `Action · AI` 标签。ai 配置段 `{enabled, backend=pi-rpc, thinking=off, model=null, timeout_secs=60}`；pi 缺失/超时时优雅降级为“Could not understand”。另修：`xdg-open` 在本机挂 Tracker3 导致超时 → open_file/open_folder 改用 `gio open`（glib，0.01s）。
 - **ADR-009（2026-09-03）**：低风险动作**默认免确认、直接执行**（`confirm_low=false`）；`confirm_required`（close_active_window / toggle_fullscreen / lock_screen）仍必须显式确认。规则/AI 命中后，低风险自动走 executing→result（结果在弹窗展示，成功消息用可读描述如 “Switch workspace: workspace 2”）；高风险停在 awaiting_confirm 等用户确认。安全：风险分级与白名单不变。
+- **ADR-010（2026-09-03）**：新增**路径 blocklist**（`config/blocklist.json`）：隐藏（点开头）条目 + 敏感路径段/文件名（`.ssh/.gnupg/.config/.cache/.local/.pki/.npm/.cargo`、agent auth、浏览器数据、keyring、密钥/证书文件等）禁止被 `open_file`/`open_folder` 访问，规则与 AI 来源同等生效。三层执行：resolver 不返回/搜索剪枝 → policy 拒决 → executor 拒绝。用户可用 `~/.config/omarchy/voice-control/blocklist.json` 扩展；`omarchy-voice-control blocklist` 查看。60 单测全绿。
