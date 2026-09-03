@@ -96,6 +96,10 @@ same `state.json` phase file the popover reads:
 | 完成/出错      | `result`          | dismiss                                  |
 
 - Drag the pet to move it; the position persists in `pet.json`.
+- Cancel anytime: **right-click** the pet, or click the red ✗ badge that
+  appears in its corner while recording / processing / awaiting confirm
+  (awaiting → cancels the pending action; recording/processing → discards
+  the audio; nothing is ever executed).
 - Toggle it from the popover (小飞马助手 switch) or via the CLI:
   `omarchy-voice-control pet show|hide|toggle|pos <x> <y>|scale <s>`.
 - Sprites live in `ui/pet/`; the phase → file mapping is the `sprites` object
