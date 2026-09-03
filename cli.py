@@ -11,6 +11,8 @@ Subcommands:
   catalog                Generate the machine command catalog (config/catalog.json)
   blocklist              Print the effective path blocklist
   check                  Print provider status as JSON
+  pet [show|hide|toggle|pos <x> <y>|scale <s>]
+                         Desktop-mascot visibility/position (pet.json)
   test transcribe <wav>  Print what Voxtype returns for a file (no execution)
 """
 
@@ -27,6 +29,7 @@ if _ROOT not in sys.path:
 
 from config import blocklist as blocklist_mod  # noqa: E402
 from config import catalog as catalog_mod  # noqa: E402
+from config import pet as pet_mod  # noqa: E402
 from config import settings  # noqa: E402
 from executor import actions as executor  # noqa: E402
 from intent import rules as intent_rules  # noqa: E402
@@ -271,6 +274,44 @@ def cmd_check() -> int:
     return 0
 
 
+def cmd_pet(argv: list) -> int:
+    """Desktop-mascot (小飞马) visibility/position, persisted to pet.json.
+
+    The QML pet overlay watches pet.json with FileView, so every subcommand
+    here immediately moves or hides the pet on screen.
+    """
+    if not argv or argv[0] == "status":
+        print(json.dumps(pet_mod.load_pet(), ensure_ascii=False, indent=2))
+        return 0
+    sub = argv[0]
+    if sub in ("show", "hide"):
+        pet_mod.save_pet({"visible": sub == "show"})
+        audit("pet %s" % sub)
+        return 0
+    if sub == "toggle":
+        cur = pet_mod.load_pet()
+        pet_mod.save_pet({"visible": not cur.get("visible", True)})
+        audit("pet toggle")
+        return 0
+    if sub == "pos" and len(argv) >= 3:
+        try:
+            x, y = int(argv[1]), int(argv[2])
+        except ValueError:
+            return _err("pet pos: expected two integers, got %r" % argv[1:])
+        pet_mod.save_pet({"x": x, "y": y})
+        audit("pet pos %d %d" % (x, y))
+        return 0
+    if sub == "scale" and len(argv) >= 2:
+        try:
+            scale = float(argv[1])
+        except ValueError:
+            return _err("pet scale: expected a number, got %r" % argv[1])
+        pet_mod.save_pet({"scale": max(0.4, min(2.0, scale))})
+        audit("pet scale %.2f" % scale)
+        return 0
+    return _err("pet: unknown subcommand %r" % sub)
+
+
 def cmd_test_transcribe(wav: str) -> int:
     cfg, _aliases = _load()
     try:
@@ -311,6 +352,8 @@ def main(argv=None) -> int:
         return cmd_blocklist()
     if command == "check":
         return cmd_check()
+    if command == "pet":
+        return cmd_pet(argv[1:])
     if command == "test" and len(argv) > 2 and argv[1] == "transcribe":
         return cmd_test_transcribe(argv[2])
     if command in ("help", "--help", "-h"):

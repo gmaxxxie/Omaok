@@ -10,6 +10,15 @@ Goal: a basic, operable Omarchy voice-control extension (goal 8d7e5501).
 - [x] T6 Install + register bar widget + push-to-talk binding + reload + verify
 - [x] T7 End-to-end runtime verification
 - [x] T8 AI intent layer via pi RPC mode (non-thinking) + machine command catalog
+- [x] T9 Desktop pet (小飞马) overlay: draggable layer window, click-to-activate voice, state sprites, popover show/hide toggle
+
+## T9 (desktop pet) evidence (2026-09-03)
+
+- 8 sprites (base + 7 states) generated in ChatGPT, verified transparent RGBA + consistent palette (cream body / champagne mane), deduped to 8 unique files in `ui/pet/` (base.png idle.png recording.png transcribing.png confirm.png executing.png done.png error.png). Mapping is a one-line edit in `ui/PetOverlay.qml` (`sprites` object) pending user confirmation against `状态对照图.png`.
+- `config/pet.py` + `cli.py pet` subcommand (status/show/hide/toggle/pos/scale) persist visibility+position atomically to `~/.config/omarchy/voice-control/pet.json`.
+- `ui/PetOverlay.qml`: `PanelWindow` (WlrLayer.Overlay, keyboardFocus None, ExclusionMode.Ignore) at `margins{left:petX,top:petY}`; watches state.json + pet.json via FileView; drag updates margins live and persists on release; single click = same `activate()` semantics as the popover (idle→record start, recording→record stop, awaiting_confirm→confirm, result→cancel-action); speech bubble + ✓/✗ confirm buttons; idle bob / listening pulse / flying bob animations.
+- Popover gains a 小飞马助手 Toggle (show/hide via `pet show|hide`) + reset-position button.
+- qmllint clean on both QML files; 77 unit tests pass (added tests/test_pet.py).
 
 ## T8 (AI layer) evidence (2026-09-03)
 

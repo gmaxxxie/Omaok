@@ -19,6 +19,11 @@ explicit confirmation reach the executor.
   is deliberately not used.
 - **Confirm before acting**: every action is reviewed in the popover
   (transcript → action → target → risk) and requires an explicit Confirm.
+- **Desktop pet (小飞马)**: a draggable Pegasus floats on the desktop mirroring
+  the same phase state-machine — click it to start listening, click again to
+  stop + recognize, click a third time on the confirm bubble to execute.
+  Show/hide it from the popover's 小飞马助手 toggle; drag it anywhere and the
+  position persists in `~/.config/omarchy/voice-control/pet.json`.
 - **Never records invisibly**: closing the popover while listening immediately
   discards the audio.
 - **Strict Action schema**: 10 allow-listed action types with
@@ -54,9 +59,11 @@ intent/                # deterministic zh/en phrase rules -> strict Actions
 resolver/              # app/file/folder/workspace resolution (allow-listed roots)
 policy/                # allowlist, risk classification, confirmation
 executor/              # Hyprland 0.56.x / XDG / omarchy system actions
-config/                # defaults + user overrides (aliases, STT, roots)
+config/                # defaults + user overrides (aliases, STT, roots, pet)
 ui/VoiceControl.qml    # bar icon + popover (KeyboardPanel, FileView-driven)
-tests/                 # unittest suite (31 tests)
+ui/PetOverlay.qml      # desktop-pet layer window (draggable 小飞马, state sprites)
+ui/pet/                # pet sprites (transparent PNGs) + phase mapping in QML
+tests/                 # unittest suite (77 tests)
 ```
 
 ## User configuration
@@ -73,3 +80,23 @@ audit log at `~/.local/state/omarchy-voice-control/audit.log`.
 `SUPER + SHIFT + V` (hold to talk). `SUPER + X` was already bound to
 "Universal cut", so it was **not** overwritten — see `docs/requirements.md`
 ADR-004.
+
+## Desktop pet (小飞马)
+
+A small draggable Pegasus floating above the desktop, driven by the exact
+same `state.json` phase file the popover reads:
+
+| Pet state      | Phase             | Click                                    |
+|----------------|-------------------|------------------------------------------|
+| 待机           | `idle`            | start listening                          |
+| 聆听           | `recording`       | stop + recognize                         |
+| 思考           | `transcribing`    | — (busy)                                 |
+| 待确认         | `awaiting_confirm`| confirm (bubble shows ✓ / ✗)             |
+| 执行           | `executing`       | — (busy)                                 |
+| 完成/出错      | `result`          | dismiss                                  |
+
+- Drag the pet to move it; the position persists in `pet.json`.
+- Toggle it from the popover (小飞马助手 switch) or via the CLI:
+  `omarchy-voice-control pet show|hide|toggle|pos <x> <y>|scale <s>`.
+- Sprites live in `ui/pet/`; the phase → file mapping is the `sprites` object
+  at the top of `ui/PetOverlay.qml` (rename the PNGs or remap there).

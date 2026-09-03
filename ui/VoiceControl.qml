@@ -26,6 +26,7 @@ Panel {
   readonly property string homeDir: Quickshell.env("HOME") || ""
   readonly property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") || "/tmp"
   readonly property string statePath: root.runtimeDir + "/omarchy-voice-control/state.json"
+  readonly property string petPath: root.homeDir + "/.config/omarchy/voice-control/pet.json"
   readonly property string bin: root.setting("bin", root.homeDir + "/.local/bin/omarchy-voice-control")
 
   // --- state (mirrors CLI state.json) ---
@@ -37,6 +38,9 @@ Panel {
   property var result: null
   property var provider: null
   property int focusIndex: 0
+
+  // --- desktop pet (小飞马) ---
+  property bool petVisible: true
 
   readonly property bool recording: root.phase === "recording"
   readonly property bool awaiting: root.phase === "awaiting_confirm"
@@ -83,6 +87,27 @@ Panel {
     watchChanges: true
     atomicWrites: true
     onLoaded: root.parseState()
+    onFileChanged: reload()
+  }
+
+  // The pet overlay (a separate always-on-top layer window). Watches the same
+  // state.json and its own pet.json (visibility/position) via FileView inside.
+  PetOverlay {
+    bin: root.bin
+    statePath: root.statePath
+  }
+
+  FileView {
+    id: petFile
+    path: root.petPath
+    watchChanges: true
+    atomicWrites: true
+    onLoaded: function () {
+      try {
+        var o = JSON.parse(petFile.text() || "{}")
+        if (o && typeof o.visible === "boolean") root.petVisible = o.visible
+      } catch (e) {}
+    }
     onFileChanged: reload()
   }
 
@@ -195,6 +220,45 @@ Panel {
             font.pixelSize: Style.font.caption
             wrapMode: Text.Wrap
             textFormat: Text.PlainText
+          }
+
+          PanelSeparator {
+            foreground: root.fg
+          }
+
+          // ---- Desktop pet (小飞马) ----
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+            Toggle {
+              id: petToggle
+              width: parent.width - Style.space(8) - Style.space(42)
+              label: "小飞马助手"
+              description: "桌面宠物 · 点击开始/结束语音，可拖动"
+              checked: root.petVisible
+              foreground: root.fg
+              accent: Color.accent
+              fontFamily: root.barFont
+              onClicked: {
+                root.petVisible = !root.petVisible
+                root.cmd("pet " + (root.petVisible ? "show" : "hide"))
+              }
+            }
+            PanelActionButton {
+              width: Style.space(34)
+              height: Style.space(34)
+              size: Style.space(18)
+              iconText: "\uF01E"
+              tooltipText: "重置宠物位置"
+              foreground: root.fg
+              hoverColor: root.fg
+              anchors.verticalCenter: petToggle.verticalCenter
+              onClicked: {
+                root.cmd("pet pos 72 64")
+                root.petVisible = true
+                root.cmd("pet show")
+              }
+            }
           }
 
           PanelSeparator {
