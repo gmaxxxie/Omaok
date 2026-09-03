@@ -37,11 +37,13 @@ class _FakeRecorder:
 
 class TestStateMachine(unittest.TestCase):
     def setUp(self):
-        # Isolate runtime state per test.
+        # Isolate runtime state AND operation memory per test.
         self.tmp = tempfile.mkdtemp()
         self._rt = state_mod._RUNTIME_BASE
         state_mod._RUNTIME_BASE = self.tmp
-        # Reset module-level path caches by reading the functions (they read _RUNTIME_BASE)
+        import config.memory as memory_mod
+        self._mem_orig = memory_mod.settings.USER_CONFIG_DIR
+        memory_mod.settings.USER_CONFIG_DIR = self.tmp
         self.patchers = [
             mock.patch.object(cli_mod, "Recorder", _FakeRecorder),
             mock.patch.object(cli_mod, "raw_duration_seconds", return_value=1.0),
@@ -52,9 +54,11 @@ class TestStateMachine(unittest.TestCase):
         self.addCleanup(self._cleanup)
 
     def _cleanup(self):
+        import config.memory as memory_mod
         for p in self.patchers:
             p.stop()
         state_mod._RUNTIME_BASE = self._rt
+        memory_mod.settings.USER_CONFIG_DIR = self._mem_orig
 
     def _set_transcript(self, text):
         cli_mod.stt.transcribe.return_value = text

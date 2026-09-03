@@ -31,6 +31,7 @@ if _ROOT not in sys.path:
 from config import blocklist as blocklist_mod  # noqa: E402
 from config import catalog as catalog_mod  # noqa: E402
 from config import pet as pet_mod  # noqa: E402
+from config import memory as memory_mod  # noqa: E402
 from config import settings  # noqa: E402
 from executor import actions as executor  # noqa: E402
 from intent import rules as intent_rules  # noqa: E402
@@ -78,13 +79,31 @@ def _process_transcript(st: dict, cfg: dict, aliases: dict) -> None:
         write_state(st)
         return
 
-    draft = intent_rules.parse(text)
+    # 1) Operation memory: repeat/near-identical commands replay the known draft
+    #    (skip parse + AI; still re-resolved + re-validated below).
+    draft = None
     source = "rule"
     action = None
-    if draft is not None:
-        action = resolver.resolve_action(dict(draft), cfg, aliases)
+    entry = memory_mod.lookup(text)
+    if entry:
+        cached = dict(entry.get("draft") or {})
+        cached["confidence"] = float(cached.get("confidence", 0.8))
+        a = resolver.resolve_action(dict(cached), cfg, aliases)
+        if a is not None and a["type"] == cached.get("type"):
+            action = a
+            draft = cached
+            source = str(cached.get("source") or "rule")
+            audit("memory hit: %r -> %s" % (text, action["type"]))
+
+    # 2) Deterministic rules.
     if action is None:
-        # Rules missed or couldn't resolve (e.g. garbled transcript) -> local AI layer.
+        draft = intent_rules.parse(text)
+        if draft is not None:
+            source = "rule"
+            action = resolver.resolve_action(dict(draft), cfg, aliases)
+
+    # 3) Local AI intent layer.
+    if action is None:
         ai_draft = intent_ai.analyze(text, cfg)
         if ai_draft is not None:
             source = "future_llm"
@@ -94,7 +113,7 @@ def _process_transcript(st: dict, cfg: dict, aliases: dict) -> None:
         st["phase"] = "idle"
         st["error"] = "Could not understand the command"
         write_state(st)
-        audit("parse failed (rules + AI) for %r" % text)
+        audit("parse failed (rules + AI + memory) for %r" % text)
         return
     action["source"] = source
 
@@ -106,6 +125,9 @@ def _process_transcript(st: dict, cfg: dict, aliases: dict) -> None:
         write_state(st)
         audit("policy block: %s" % verdict["reason"])
         return
+
+    # Learn this successful interpretation (deduped by normalized text).
+    memory_mod.remember(draft, text, action["confidence"])
 
     st["action"] = action
     st["target_desc"] = resolver.describe(action)

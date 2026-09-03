@@ -134,7 +134,7 @@ Panel {
     bar: root.bar
     text: "\uF036C"                       // Nerd Font microphone (verified in bar font)
     active: root.recording                // red/tinted while listening
-    tooltipText: "Voice Control"
+    tooltipText: "omaok — voice control"
     onPressed: function (b) {
       if (b === Qt.LeftButton) root.toggle()
     }
@@ -187,7 +187,7 @@ Panel {
 
             Text {
               id: headerTitle
-              text: "Voice Control"
+              text: "omaok"
               color: root.fg
               font.family: root.barFont
               font.pixelSize: Style.font.title

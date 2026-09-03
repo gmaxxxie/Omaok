@@ -5,6 +5,7 @@ and that the CLI only ever lets a validated Action through the same gate.
 """
 
 import os
+import tempfile
 import sys
 import unittest
 from unittest import mock
@@ -94,24 +95,22 @@ class TestAnalyze(unittest.TestCase):
         import time
         proc_stub = mock.Mock()
         proc_stub.poll.return_value = None  # daemon thinks pi is alive
+        sock_path = os.path.join(tempfile.mkdtemp(), "ai.sock")
         with mock.patch.object(intent_ai, "_spawn_pi", return_value=proc_stub), \
              mock.patch.object(intent_ai, "_send"), \
+             mock.patch.object(intent_ai, "_sock_path", return_value=sock_path), \
              mock.patch.object(intent_ai, "_prompt_on", return_value='{"type":"open_folder","target":{"name":"downloads"},"confidence":0.8}'):
             cfg = {"ai": {"enabled": True, "timeout_secs": 30, "idle_secs": 30}}
             thread = threading.Thread(target=intent_ai.daemon_main, args=(cfg,), daemon=True)
             thread.start()
             for _ in range(100):
-                if os.path.exists(intent_ai._sock_path()):
+                if os.path.exists(sock_path):
                     break
                 time.sleep(0.05)
             draft = intent_ai._daemon_request("打开下载文件夹", cfg)
             self.assertIsNotNone(draft)
             self.assertEqual(draft["type"], "open_folder")
             self.assertEqual(draft["source"], "future_llm")
-            try:
-                os.unlink(intent_ai._sock_path())
-            except OSError:
-                pass
 
 
 class TestCliAiPath(unittest.TestCase):
@@ -123,6 +122,9 @@ class TestCliAiPath(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self._rt = state_mod._RUNTIME_BASE
         state_mod._RUNTIME_BASE = self.tmp
+        import config.memory as memory_mod
+        self._mem_orig = memory_mod.settings.USER_CONFIG_DIR
+        memory_mod.settings.USER_CONFIG_DIR = self.tmp
         import cli as cli_mod
         self.cli = cli_mod
         self.patchers = [
@@ -136,9 +138,11 @@ class TestCliAiPath(unittest.TestCase):
 
     def _cleanup(self):
         import state as state_mod
+        import config.memory as memory_mod
         for p in self.patchers:
             p.stop()
         state_mod._RUNTIME_BASE = self._rt
+        memory_mod.settings.USER_CONFIG_DIR = self._mem_orig
 
     def test_rule_hit_does_not_call_ai(self):
         self.cli.stt.transcribe.return_value = "打开浏览器"  # rule matcher handles this

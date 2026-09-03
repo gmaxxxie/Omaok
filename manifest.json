@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "max.voice-control",
-  "name": "Voice Control",
+  "name": "omaok",
   "version": "1.0.0",
   "author": "max",
   "license": "MIT",
@@ -13,7 +13,7 @@
     "barWidget": "ui/VoiceControl.qml"
   },
   "barWidget": {
-    "displayName": "Voice Control",
+    "displayName": "omaok",
     "description": "Mic button that opens a safe voice-control assistant popover (record -> review -> confirm -> execute)",
     "category": "Utility",
     "allowMultiple": false

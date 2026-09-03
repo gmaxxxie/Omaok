@@ -1,6 +1,7 @@
-# omarchy-voice-control
+# omaok
 
 Safe, local-first desktop voice control for [Omarchy](https://omarchy.org/).
+(product name: **omaok**; plugin id `max.voice-control`)
 A compact bar icon opens a popover with a big microphone button: speak a
 Chinese or English command, review the recognized action, **explicitly
 confirm**, then a safe allow-listed desktop action runs.

@@ -14,7 +14,7 @@
     "enabled": true,
     "backend": "pi-rpc",
     "thinking": "off",
-    "model": "small-int8",
+    "model": null,
     "timeout_secs": 60,
     "idle_secs": 900
   },
