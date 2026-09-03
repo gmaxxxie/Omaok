@@ -55,6 +55,7 @@ Item {
   readonly property bool working: root.phase === "transcribing" || root.phase === "executing"
   readonly property bool showResult: root.phase === "result"
   readonly property bool errorPhase: root.phase === "idle" && root.error !== ""
+  readonly property bool cancellable: root.recording || root.working || root.awaiting
   readonly property bool bubbleShown: root.phase !== "idle" || root.errorPhase || root.hovered
   readonly property int petSize: Math.max(48, Math.round(132 * root.petScale))
 
@@ -140,9 +141,9 @@ Item {
 
   function bubbleText() {
     if (root.errorPhase) return "⚠ " + (root.error || "出错了")
-    if (root.phase === "recording") return "听你说话中…\n再点一下结束"
-    if (root.phase === "transcribing") return "识别中…"
-    if (root.phase === "executing") return "执行中…"
+    if (root.phase === "recording") return "听你说话中…\n再点一下结束 · 右击取消"
+    if (root.phase === "transcribing") return "识别中…（右击取消）"
+    if (root.phase === "executing") return "执行中…（右击取消）"
     if (root.phase === "awaiting_confirm") {
       var t = root.transcript !== "" ? "「" + root.transcript + "」" : ""
       return t + (t !== "" ? "\n" : "") + "这样做对吗？"
@@ -162,6 +163,14 @@ Item {
     if (root.working) { return }
     if (root.phase === "result") { root.cmdCli(["cancel-action"]); return }
     root.cmdCli(["record", "start"])
+  }
+
+  // Abort whatever is in flight — never executes. Mirrors the popover's
+  // cancelPending(): awaiting -> clear the pending action; recording or
+  // processing -> stop and discard the audio.
+  function cancelPending() {
+    if (root.awaiting) { root.cmdCli(["cancel-action"]); return }
+    if (root.recording || root.working) { root.cmdCli(["record", "cancel"]); return }
   }
 
   // Snap the bob animation back to rest before a drag, then persist on release.
@@ -330,6 +339,12 @@ Item {
             property bool moved: false
 
             onPressed: function (m) {
+              // Right-click aborts the in-flight phase (never executes).
+              if (m.button === Qt.RightButton) {
+                if (root.cancellable) root.cancelPending()
+                return
+              }
+              // Left press: begin drag/click gesture.
               root.dragging = true
               hoverArea.sx = m.x
               hoverArea.sy = m.y
@@ -353,9 +368,40 @@ Item {
               else root.activate()
             }
             onContainsMouseChanged: root.hovered = containsMouse
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
           }
         }
-      }
+
+        // Cancel badge: a small ✗ that aborts the in-flight phase.
+        // Sits above the pet's interaction area so it wins clicks.
+        Rectangle {
+          visible: root.cancellable
+          width: Style.space(22)
+          height: Style.space(22)
+          radius: width / 2
+          color: Qt.rgba(0.85, 0.22, 0.24, 0.92)
+          border.color: Qt.rgba(1, 1, 1, 0.35)
+          border.width: 1
+          anchors.top: spriteArea.top
+          anchors.right: spriteArea.right
+          anchors.topMargin: -Style.space(1)
+          anchors.rightMargin: -Style.space(1)
+          Behavior on visible { NumberAnimation { duration: 120 } }
+
+          Text {
+            anchors.centerIn: parent
+            text: "\uF00D"          // ✗
+            color: "#ffffff"
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+          }
+
+          MouseArea {
+            anchors.fill: parent
+            onClicked: root.cancelPending()
+          }
+        }
     }
   }
+}
 }
