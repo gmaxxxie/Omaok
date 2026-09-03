@@ -56,7 +56,7 @@ Item {
   readonly property bool showResult: root.phase === "result"
   readonly property bool errorPhase: root.phase === "idle" && root.error !== ""
   readonly property bool cancellable: root.recording || root.working || root.awaiting
-  readonly property bool bubbleShown: root.phase !== "idle" || root.errorPhase || root.hovered
+  readonly property bool bubbleShown: true
   readonly property int petSize: Math.max(48, Math.round(132 * root.petScale))
 
   // phase (display) -> sprite file under ui/pet/. Remap here or rename the PNGs.
@@ -140,19 +140,19 @@ Item {
   }
 
   function bubbleText() {
-    if (root.errorPhase) return "⚠ " + (root.error || "出错了")
-    if (root.phase === "recording") return "听你说话中…\n再点一下结束 · 右击取消"
-    if (root.phase === "transcribing") return "识别中…（右击取消）"
-    if (root.phase === "executing") return "执行中…（右击取消）"
+    if (root.errorPhase) return "⚠ " + (root.error || "Something went wrong")
+    if (root.phase === "recording") return "Listening…\ntap again to finish · right-click to cancel"
+    if (root.phase === "transcribing") return "Thinking… (right-click to cancel)"
+    if (root.phase === "executing") return "Working… (right-click to cancel)"
     if (root.phase === "awaiting_confirm") {
-      var t = root.transcript !== "" ? "「" + root.transcript + "」" : ""
-      return t + (t !== "" ? "\n" : "") + "这样做对吗？"
+      var t = root.transcript !== "" ? "\u201C" + root.transcript + "\u201D" : ""
+      return t + (t !== "" ? "\n" : "") + "Do this?"
     }
     if (root.phase === "result") {
       var ok = root.result && root.result.ok
-      return (ok ? "✓ " : "✗ ") + (root.result ? root.result.message : "")
+      return (ok ? "\u2713 " : "\u2717 ") + (root.result ? root.result.message : "")
     }
-    return "" // idle: bubble only on hover
+    return "Click to talk" // idle: persistent hint
   }
 
   // ---- click semantics (identical to the popover's activate()) ----
@@ -201,7 +201,7 @@ Item {
       // Sized by explicit content widths (no anchors.fill on the inner column)
       // so implicit sizes never form a cycle (which collapsed the window to 1px).
       readonly property int bubbleTextW:
-        root.awaiting || root.showResult || root.errorPhase ? 208 : 124
+        root.awaiting || root.showResult || root.errorPhase ? 212 : 150
       Rectangle {
         id: bubble
         visible: root.bubbleShown
@@ -372,21 +372,24 @@ Item {
           }
         }
 
-        // Cancel badge: a small ✗ that aborts the in-flight phase.
-        // Sits above the pet's interaction area so it wins clicks.
+        // Cancel badge: a small frosted ✗ that aborts the in-flight phase.
+        // Sits above the pet's interaction area so it wins clicks. No red
+        // fill — translucent glass that darkens on hover.
         Rectangle {
           visible: root.cancellable
           width: Style.space(22)
           height: Style.space(22)
           radius: width / 2
-          color: Qt.rgba(0.85, 0.22, 0.24, 0.92)
-          border.color: Qt.rgba(1, 1, 1, 0.35)
+          color: cancelBadgeMouse.containsMouse
+            ? Qt.rgba(0, 0, 0, 0.58)
+            : Qt.rgba(0, 0, 0, 0.30)
+          border.color: Qt.rgba(1, 1, 1, 0.5)
           border.width: 1
           anchors.top: spriteArea.top
           anchors.right: spriteArea.right
           anchors.topMargin: -Style.space(1)
           anchors.rightMargin: -Style.space(1)
-          Behavior on visible { NumberAnimation { duration: 120 } }
+          Behavior on color { ColorAnimation { duration: 130 } }
 
           Text {
             anchors.centerIn: parent
@@ -397,7 +400,9 @@ Item {
           }
 
           MouseArea {
+            id: cancelBadgeMouse
             anchors.fill: parent
+            hoverEnabled: true
             onClicked: root.cancelPending()
           }
         }
