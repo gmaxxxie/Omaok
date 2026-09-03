@@ -5,6 +5,8 @@ Subcommands:
   record start           Begin listening (spawn recorder)
   record stop            Stop, transcribe, parse, resolve -> awaiting_confirm
   record cancel          Stop and discard audio (never executed)
+  record finalize        Detached watchdog: auto-finalize if the recorder dies
+                         on its own (max_seconds cap / crash) without a stop
   confirm                Execute the pending confirmed Action
   cancel-action          Clear the pending Action
   refresh-provider       Re-probe Voxtype status into state.json
@@ -19,9 +21,13 @@ Subcommands:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import subprocess
 import sys
+import threading
+import time
 
 # Allow imports of the plugin's top-level packages from anywhere.
 _ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -39,7 +45,14 @@ from intent import ai as intent_ai  # noqa: E402
 from policy import policy  # noqa: E402
 from recorder import Recorder, raw_duration_seconds  # noqa: E402
 from resolver import lookup as resolver  # noqa: E402
-from state import audit, load_state, wav_path, write_state  # noqa: E402
+from state import (  # noqa: E402
+    audit,
+    load_state,
+    recorder_pid_path,
+    state_path,
+    wav_path,
+    write_state,
+)
 from stt import provider as stt  # noqa: E402
 
 
@@ -179,14 +192,34 @@ def cmd_record_start() -> int:
     st["result"] = None
     write_state(st)
     audit("record start")
+    _spawn_record_watchdog(getattr(recorder, "pid", None))
     return 0
 
 
-def cmd_record_stop() -> int:
-    cfg, aliases = _load()
+@contextlib.contextmanager
+def _state_lock() -> contextlib.AbstractContextManager:
+    """Serialize read-modify-write of state.json between CLI processes that can
+    race: a user-initiated `record stop` vs. the recorder-death watchdog."""
+    import fcntl
+
+    path = os.path.join(os.path.dirname(state_path()), "state.lock")
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def _finalize_recording(cfg: dict, aliases: dict) -> int:
+    """Shared record-stop path (user-initiated or watchdog): mark transcribing,
+    then transcribe + parse with a hard deadline so the CLI can never hang the
+    UI. Callers guard on the phase being "recording" so the same recording is
+    never finalized twice."""
     st = load_state()
-    recorder = _make_recorder(cfg)
-    recorder.stop()  # finalize WAV, kill any lingering recorder (no-op if none)
     st["phase"] = "transcribing"
     write_state(st)
 
@@ -201,7 +234,6 @@ def cmd_record_stop() -> int:
     # Run transcription + intent in a daemon thread with a hard deadline so the
     # CLI can never hang the UI (belt-and-suspenders on top of bounded WAV size
     # and non-blocking RPC reads).
-    import threading
     done = threading.Event()
 
     def work():
@@ -221,6 +253,79 @@ def cmd_record_stop() -> int:
         audit("record stop watchdog timed out after %.0fs" % hard_timeout)
         return 1
     return 0
+
+
+def _spawn_record_watchdog(pid: int | None) -> None:
+    """Detached watcher for the recorder's silent `timeout` cap / crashes. When
+    the recorder dies before a user stop/cancel, `record finalize` transitions
+    the state machine instead of stranding it in "recording" forever."""
+    try:
+        cmd = [sys.executable, os.path.abspath(__file__), "record", "finalize"]
+        if pid is not None:
+            cmd.append(str(pid))
+        subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception:
+        pass  # watchdog is a safety net; never fail record start over it
+
+
+def cmd_record_stop() -> int:
+    cfg, aliases = _load()
+    recorder = _make_recorder(cfg)
+    recorder.stop()  # finalize WAV, kill any lingering recorder (no-op if none)
+    return _finalize_recording(cfg, aliases)
+
+
+def cmd_record_finalize() -> int:
+    """Watchdog entry: wait for the recorder we were spawned for to die, then
+    run the normal record-stop finalize — but only if the state machine is
+    still in "recording" AND still owned by that same recorder. A user-initiated
+    stop/cancel, or a newer recording, always wins (no double-finalize)."""
+    cfg, aliases = _load()
+    target_pid: int | None = None
+    if len(sys.argv) > 2:
+        try:
+            target_pid = int(sys.argv[2])
+        except ValueError:
+            target_pid = None
+    recorder = _make_recorder(cfg)
+    max_secs = float(cfg.get("recorder", {}).get("max_seconds", 30))
+    deadline = time.monotonic() + max_secs + 30
+    while time.monotonic() < deadline:
+        if target_pid is None:
+            if not recorder.running:
+                break
+        else:
+            try:
+                os.kill(target_pid, 0)
+            except OSError:
+                break
+        time.sleep(0.2)
+    else:
+        return 0  # recorder outlived the cap: give up quietly
+
+    # Give a concurrent user-initiated stop/cancel a moment to claim the phase.
+    time.sleep(1.0)
+    with _state_lock():
+        st = load_state()
+        if st.get("phase") != "recording":
+            return 0  # already stopped/cancelled
+        if target_pid is not None:
+            try:
+                with open(recorder_pid_path(), "r", encoding="utf-8") as fh:
+                    current_pid = int(fh.read().strip())
+            except (OSError, ValueError):
+                current_pid = target_pid  # pid file gone: assume still ours
+            if current_pid != target_pid:
+                return 0  # a newer recording owns the state; leave it alone
+        recorder.stop()  # kill any lingering recorder + materialize the WAV
+        audit("record auto-finalize (recorder died without stop)")
+        return _finalize_recording(cfg, aliases)
 def cmd_record_cancel() -> int:
     cfg, _aliases = _load()
     _make_recorder(cfg).cancel()
@@ -375,6 +480,8 @@ def main(argv=None) -> int:
             return cmd_record_stop()
         if argv[1] == "cancel":
             return cmd_record_cancel()
+        if argv[1] == "finalize":
+            return cmd_record_finalize()
         return _err("record: unknown subcommand %r" % argv[1])
     if command == "confirm":
         return cmd_confirm()

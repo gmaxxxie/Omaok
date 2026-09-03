@@ -109,6 +109,11 @@ class Recorder:
         )
         _write_pid(self._proc.pid)
 
+    @property
+    def pid(self) -> int | None:
+        """The spawned recorder's PID (None until start() is called)."""
+        return self._proc.pid if self._proc is not None else None
+
     @staticmethod
     def _kill_existing() -> None:
         pid = _read_pid()

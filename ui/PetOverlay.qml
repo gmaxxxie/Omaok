@@ -125,6 +125,19 @@ Item {
     onFileChanged: reload()
   }
 
+  // The runtime dir/state.json does not exist when the shell first starts (the
+  // CLI creates them on the first command), so FileView's initial read fails
+  // and neither the file nor the directory watcher can be established — later
+  // creation/rewrites would never be noticed and the UI would stay frozen.
+  // Poll reload() until the file loads (which also (re)establishes the
+  // watchers), then keep a slow safety-net poll in case the directory watch
+  // ever goes quiet.
+  Timer {
+    interval: stateFile.loaded ? 3000 : 700
+    repeat: true
+    onTriggered: stateFile.reload()
+  }
+
   FileView {
     id: petFile
     path: root.petPath
