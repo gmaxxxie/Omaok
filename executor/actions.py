@@ -133,8 +133,8 @@ def _state_action(action_type: str, state: str) -> tuple:
         if ok:
             state = "off" if "enabled" in out.lower() else "on"
     if action_type == "set_nightlight":
-        cmd = ["omarchy-shell", "nightlight", state]
-        return _run(cmd, timeout=15)
+        method = {"on": "enable", "off": "disable", "toggle": "toggle"}.get(state, "toggle")
+        return _run(["omarchy-shell", "nightlight", method], timeout=15)
     if action_type == "set_bluetooth":
         return _run(["omarchy", "bluetooth", "power", state], timeout=15)
     if action_type == "set_wifi":

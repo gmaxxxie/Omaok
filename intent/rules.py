@@ -122,12 +122,12 @@ _MIC_TOGGLE_RE = re.compile(r"静音麦克风|麦克风静音|关闭麦克风|�
 _DND_RE = re.compile(r"勿扰|免打扰|勿扰模式|do not disturb|dnd", re.I)
 _BAR_RE = re.compile(r"隐藏顶栏|显示顶栏|顶栏|任务栏|hide bar|show bar|toggle bar", re.I)
 _CLIPBOARD_RE = re.compile(r"打开剪贴板|剪贴板|clipboard", re.I)
-_EMOJI_RE = re.compile(r"打开表情|表情符号|emoji", re.I)
+_EMOJI_RE = re.compile(r"打开表情|表情符号|表情|emoji", re.I)
 
 # ---- parameterized (batch 2) ----
 _REMINDER_RE = re.compile(
-    r"提醒(?:我)?\s*(?:在|过)?\s*(\d+)\s*(分钟|分|秒|小时|min|minute|hour)s?\s*(?:后|之后)?\s*(.*)"
-    r"|remind me(?: in)?\s*(\d+)\s*(min|minute|hour)s?\s*(?:to|about)?\s*(.*)",
+    r"提醒(?:我)?\s*(?:在|过)?\s*(\d+)\s*(分钟|分|秒|小时|minute|hour|min)s?\s*(?:后|之后)?\s*(.*)"
+    r"|remind me(?: in)?\s*(\d+)\s*(minute|hour|min)s?\s*(?:to|about)?\s*(.*)",
     re.I,
 )
 _REMINDER_HALF = re.compile(r"提醒(?:我)?(半小时)(?:后|之后)?(.*)", re.I)
@@ -176,6 +176,9 @@ def parse(text: str) -> dict | None:
     m = _VOLUME_DOWN_RE.search(t)
     if m:
         return _draft("volume_down")
+    m = _MIC_TOGGLE_RE.search(t)  # more specific than generic mute
+    if m:
+        return _draft("toggle_mic")
     m = _MUTE_RE.search(t)
     if m:
         return _draft("toggle_mute")

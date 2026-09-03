@@ -79,6 +79,37 @@ class TestIntent(unittest.TestCase):
         self.assertIsNone(rules.parse("今天天气怎么样"))
         self.assertIsNone(rules.parse(""))
 
+    def test_batch1_toggles(self):
+        self.assertEqual(rules.parse("开启护眼模式")["type"], "set_nightlight")
+        self.assertEqual(rules.parse("关闭夜灯")["raw_target"], "off")
+        self.assertEqual(rules.parse("打开蓝牙")["type"], "set_bluetooth")
+        self.assertEqual(rules.parse("关闭wifi")["type"], "set_wifi")
+        self.assertEqual(rules.parse("关闭触摸板")["type"], "set_touchpad")
+        self.assertEqual(rules.parse("省电模式")["type"], "set_power_mode")
+        self.assertEqual(rules.parse("静音麦克风")["type"], "toggle_mic")
+        self.assertEqual(rules.parse("勿扰")["type"], "toggle_dnd")
+        self.assertEqual(rules.parse("隐藏顶栏")["type"], "toggle_bar")
+        self.assertEqual(rules.parse("剪贴板")["type"], "open_clipboard")
+        self.assertEqual(rules.parse("表情")["type"], "open_emoji")
+
+    def test_batch2_parameterized(self):
+        d = rules.parse("提醒我15分钟后喝水")
+        self.assertEqual(d["type"], "set_reminder")
+        self.assertEqual(d["minutes"], 15)
+        self.assertEqual(d["raw_target"], "喝水")
+        e = rules.parse("remind me in 30 minutes to check email")
+        self.assertEqual(e["minutes"], 30)
+        self.assertEqual(e["raw_target"], "check email")
+        self.assertEqual(rules.parse("调亮屏幕")["type"], "brightness_up")
+        self.assertEqual(rules.parse("调暗屏幕")["type"], "brightness_down")
+
+    def test_batch3_destructive(self):
+        self.assertEqual(rules.parse("关机")["type"], "shutdown")
+        self.assertEqual(rules.parse("重启")["type"], "reboot")
+        self.assertEqual(rules.parse("注销")["type"], "logout")
+        self.assertEqual(rules.parse("开始录屏")["type"], "screen_record_start")
+        self.assertEqual(rules.parse("停止录屏")["type"], "screen_record_stop")
+
 
 class TestResolver(unittest.TestCase):
     def _resolve(self, phrase):
@@ -112,6 +143,21 @@ class TestResolver(unittest.TestCase):
         self.assertEqual(a["type"], "switch_workspace")
         self.assertEqual(a["target"]["id"], 3)
 
+    def test_state_action_resolve(self):
+        draft = rules.parse("关闭蓝牙")
+        a = lookup.resolve_action(dict(draft), CFG, ALIASES)
+        self.assertEqual(a["target"]["state"], "off")
+        draft = rules.parse("省电模式")
+        a = lookup.resolve_action(dict(draft), CFG, ALIASES)
+        self.assertEqual(a["target"]["state"], "power-saver")
+
+    def test_reminder_resolve(self):
+        draft = rules.parse("提醒我25分钟后开会")
+        a = lookup.resolve_action(dict(draft), CFG, ALIASES)
+        self.assertEqual(a["target"]["kind"], "reminder")
+        self.assertEqual(a["target"]["minutes"], 25)
+        self.assertEqual(a["target"]["message"], "开会")
+
     def test_workspace_out_of_range(self):
         a = self._resolve("切到工作区99")
         self.assertIsNone(a)
@@ -142,6 +188,11 @@ class TestPolicy(unittest.TestCase):
         # media/volume are low risk -> auto-execute
         self.assertEqual(policy.classify({"type": "play_pause_media", "confidence": 0.9}, CFG)["risk"], "low")
         self.assertEqual(policy.classify({"type": "volume_up", "confidence": 0.9}, CFG)["risk"], "low")
+        # toggles low, destructive confirm_required
+        self.assertEqual(policy.classify({"type": "set_nightlight", "confidence": 0.9}, CFG)["risk"], "low")
+        self.assertEqual(policy.classify({"type": "set_reminder", "confidence": 0.9}, CFG)["risk"], "low")
+        for t in ("shutdown", "reboot", "logout", "screen_record_start", "screen_record_stop"):
+            self.assertEqual(policy.classify({"type": t, "confidence": 0.9}, CFG)["risk"], "confirm_required", t)
         # low confidence forces confirm_required
         self.assertEqual(policy.classify({"type": "open_app", "confidence": 0.3}, CFG)["risk"], "confirm_required")
 
@@ -205,6 +256,26 @@ class TestMediaExecutor(unittest.TestCase):
             self.assertIn("nothing is playing", msg)
             launch.assert_not_called()
             run.assert_not_called()
+
+    def test_state_actions_map_to_omarchy_commands(self):
+        from executor import actions
+        with mock.patch.object(actions, "_run", return_value=(True, "ok")) as run:
+            ok, _ = actions.execute({"type": "set_nightlight", "target": {"state": "on"}}, CFG)
+            self.assertEqual(run.call_args[0][0], ["omarchy-shell", "nightlight", "enable"])
+            ok, _ = actions.execute({"type": "set_bluetooth", "target": {"state": "toggle"}}, CFG)
+            self.assertEqual(run.call_args[0][0], ["omarchy", "bluetooth", "power", "toggle"])
+            ok, _ = actions.execute({"type": "set_power_mode", "target": {"state": "performance"}}, CFG)
+            self.assertEqual(run.call_args[0][0][:4], ["omarchy", "powerprofiles", "set", "autodetect"])
+
+    def test_reminder_and_destructive_mapping(self):
+        from executor import actions
+        with mock.patch.object(actions, "_run", return_value=(True, "ok")) as run:
+            ok, _ = actions.execute({"type": "set_reminder", "target": {"minutes": 15, "message": "喝水"}}, CFG)
+            self.assertEqual(run.call_args[0][0], ["omarchy", "reminder", "15", "喝水"])
+            ok, _ = actions.execute({"type": "shutdown", "target": {}}, CFG)
+            self.assertEqual(run.call_args[0][0], ["omarchy", "system", "shutdown"])
+            ok, _ = actions.execute({"type": "brightness_up", "target": {}}, CFG)
+            self.assertEqual(run.call_args[0][0], ["omarchy", "brightness", "display", "+10%"])
 
 
 if __name__ == "__main__":

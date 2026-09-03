@@ -349,7 +349,7 @@ def resolve_action(action: dict, cfg: dict, aliases: dict) -> dict | None:
 
     elif action_type == "set_reminder":
         try:
-            minutes = int(draft.get("minutes", 1))
+            minutes = int(action.get("minutes", 1))
         except (TypeError, ValueError):
             minutes = 1
         target = {"kind": "reminder", "minutes": max(1, minutes), "message": raw or ""}
