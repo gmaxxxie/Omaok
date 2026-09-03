@@ -55,15 +55,24 @@ def _catalog_summary() -> str:
 
 
 def _build_prompt(transcript: str) -> str:
-    allowed = "\n".join(
-        "  - %s: %s" % (t, rules.__doc__ or "") for t in sorted(rules.ALLOWED_TYPES)
-    ) or "\n".join("  - %s" % t for t in sorted(rules.ALLOWED_TYPES))
+    # Trusted per-type descriptions from the machine catalog, NOT the module
+    # docstring (which was being repeated once per type and ballooned the
+    # prompt to ~6k tokens — the dominant share of intent latency).
+    desc = {}
+    try:
+        with open(_CATALOG_PATH, "r", encoding="utf-8") as fh:
+            for a in json.load(fh).get("actions") or []:
+                t = str(a.get("type") or "")
+                if t:
+                    desc[t] = str(a.get("description") or t)
+    except Exception:
+        pass
+    types = sorted(rules.ALLOWED_TYPES)
+    allowed = "\n".join("  - %s: %s" % (t, desc.get(t, t)) for t in types)
     catalog = _catalog_summary()
     return f"""You are the intent parser for a safe, local-first desktop voice assistant on Omarchy (Hyprland).
 Convert the user's spoken command into ONE strict JSON action. The assistant can ONLY perform these action types:
 {allowed}
-
-Allowed action types are: {", ".join(sorted(rules.ALLOWED_TYPES))}.
 
 Output rules:
 - Reply with ONLY a JSON object. No markdown, no code fences, no explanation.
@@ -266,6 +275,22 @@ def _spawn_daemon() -> None:
         pass
 
 
+def _ensure_daemon() -> None:
+    """Spawn the ai-daemon only if no live daemon is already answering, so a
+    request storm never stacks duplicate daemons fighting over the socket."""
+    import socket
+    path = _sock_path()
+    try:
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        probe.settimeout(0.5)
+        probe.connect(path)
+        probe.close()
+        return  # live daemon present
+    except OSError:
+        pass
+    _spawn_daemon()
+
+
 def _daemon_request(transcript: str, cfg: dict) -> dict | None:
     """Ask the persistent ai-daemon for a draft. Returns the draft or None."""
     import socket
@@ -287,7 +312,7 @@ def _daemon_request(transcript: str, cfg: dict) -> dict | None:
             return resp.get("draft")
         except (OSError, ValueError):
             if attempt == 0:
-                _spawn_daemon()
+                _ensure_daemon()
                 time.sleep(2.0)  # let it bind the socket
                 continue
             return None
@@ -312,7 +337,23 @@ def daemon_main(cfg: dict) -> int:
     try:
         server.bind(path)
     except OSError:
-        return 1  # another daemon already owns the socket
+        # Socket path already exists. Only a problem if no live daemon is
+        # listening on it (stale file left by a crashed/restarted daemon).
+        try:
+            probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            probe.settimeout(0.5)
+            probe.connect(path)
+            probe.close()
+            return 1  # a live daemon owns the socket; fine, exit quietly
+        except OSError:
+            try:
+                os.unlink(path)  # stale socket — reclaim it
+            except OSError:
+                pass
+        try:
+            server.bind(path)
+        except OSError:
+            return 1
     server.listen(8)
     proc = None
     last_active = time.time()
