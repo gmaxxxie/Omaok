@@ -37,6 +37,15 @@ _VOLUME_ACTIONS = {
     "toggle_mute": ["omarchy", "audio", "output", "volume", "mute-toggle"],
 }
 
+# Simple conventional toggles / launchers (no arguments).
+_SIMPLE_TOGGLES = {
+    "toggle_dnd": ["omarchy", "toggle", "notification", "silencing"],
+    "toggle_mic": ["omarchy", "audio", "input", "mute"],
+    "toggle_bar": ["omarchy", "toggle", "bar"],
+    "open_clipboard": ["omarchy", "menu", "clipboard"],
+    "open_emoji": ["omarchy", "menu", "emoji"],
+}
+
 
 def _launch_detached_cmd(command: str) -> None:
     """Launch a config-supplied command without waiting (never blocks).
@@ -115,6 +124,26 @@ def _open_path(path: str) -> tuple:
     if shutil.which("gio"):
         return _run(["gio", "open", path], timeout=15)
     return _run(["xdg-open", path], timeout=15)
+
+
+def _state_action(action_type: str, state: str) -> tuple:
+    """Run a state-carrying toggle (on/off/toggle) via the conventional command."""
+    if action_type == "set_wifi" and state == "toggle":
+        ok, out = _run(["nmcli", "radio", "wifi"])
+        if ok:
+            state = "off" if "enabled" in out.lower() else "on"
+    if action_type == "set_nightlight":
+        cmd = ["omarchy-shell", "nightlight", state]
+        return _run(cmd, timeout=15)
+    if action_type == "set_bluetooth":
+        return _run(["omarchy", "bluetooth", "power", state], timeout=15)
+    if action_type == "set_wifi":
+        return _run(["nmcli", "radio", "wifi", state], timeout=15)
+    if action_type == "set_touchpad":
+        return _run(["omarchy", "toggle", "touchpad", state], timeout=15)
+    if action_type == "set_power_mode":
+        return _run(["omarchy", "powerprofiles", "set", "autodetect", state], timeout=15)
+    return False, "unknown state action"
 
 
 def _launch_or_focus(target: dict) -> tuple:
@@ -226,5 +255,37 @@ def execute(action: dict, cfg: dict) -> tuple:
 
     if action_type == "lock_screen":
         return _run(["omarchy", "system", "lock"], timeout=20)
+
+    # ---- batch 1: conventional toggles ----
+    if action_type in ("toggle_dnd", "toggle_mic", "toggle_bar"):
+        return _run(_SIMPLE_TOGGLES[action_type], timeout=15)
+
+    if action_type in ("open_clipboard", "open_emoji"):
+        return _run(_SIMPLE_TOGGLES[action_type], timeout=15)
+
+    if action_type in ("set_nightlight", "set_bluetooth", "set_wifi", "set_touchpad", "set_power_mode"):
+        return _state_action(action_type, target.get("state", "toggle"))
+
+    # ---- batch 2: parameterized ----
+    if action_type == "set_reminder":
+        minutes = int(target.get("minutes", 1))
+        message = str(target.get("message") or "")
+        return _run(["omarchy", "reminder", str(minutes), message], timeout=15)
+
+    if action_type == "brightness_up":
+        return _run(["omarchy", "brightness", "display", "+10%"], timeout=15)
+
+    if action_type == "brightness_down":
+        return _run(["omarchy", "brightness", "display", "10%-"], timeout=15)
+
+    # ---- batch 3: destructive / privacy-sensitive ----
+    if action_type in ("shutdown", "reboot", "logout"):
+        return _run(["omarchy", "system", action_type], timeout=30)
+
+    if action_type == "screen_record_start":
+        return _run(["omarchy", "capture", "screenrecording", "--fullscreen"], timeout=20)
+
+    if action_type == "screen_record_stop":
+        return _run(["omarchy", "capture", "screenrecording", "--stop-recording"], timeout=20)
 
     return False, "unknown action type: %s" % action_type

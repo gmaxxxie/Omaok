@@ -337,6 +337,23 @@ def resolve_action(action: dict, cfg: dict, aliases: dict) -> dict | None:
             return None
         target = {"kind": "workspace", "id": ws}
 
+    elif action_type in ("set_nightlight", "set_bluetooth", "set_wifi", "set_touchpad"):
+        state = raw or "toggle"
+        if state not in ("on", "off", "toggle"):
+            state = "toggle"
+        target = {"kind": "setting", "state": state}
+
+    elif action_type == "set_power_mode":
+        state = raw if raw in ("power-saver", "balanced", "performance") else "balanced"
+        target = {"kind": "setting", "state": state}
+
+    elif action_type == "set_reminder":
+        try:
+            minutes = int(draft.get("minutes", 1))
+        except (TypeError, ValueError):
+            minutes = 1
+        target = {"kind": "reminder", "minutes": max(1, minutes), "message": raw or ""}
+
     else:
         target = {}
 
@@ -373,6 +390,24 @@ def describe(action: dict) -> str:
         "volume_up": "Volume up",
         "volume_down": "Volume down",
         "toggle_mute": "Toggle mute",
+        "set_nightlight": "Night light",
+        "set_bluetooth": "Bluetooth",
+        "set_wifi": "Wi-Fi",
+        "set_touchpad": "Touchpad",
+        "toggle_dnd": "Do not disturb",
+        "toggle_mic": "Microphone mute",
+        "toggle_bar": "Toggle bar",
+        "open_clipboard": "Open clipboard",
+        "open_emoji": "Open emoji picker",
+        "set_reminder": "Set reminder",
+        "brightness_up": "Brightness up",
+        "brightness_down": "Brightness down",
+        "set_power_mode": "Power mode",
+        "shutdown": "Shut down",
+        "reboot": "Reboot",
+        "logout": "Log out",
+        "screen_record_start": "Start screen recording",
+        "screen_record_stop": "Stop screen recording",
     }
     base = labels.get(t, t)
     if t in ("open_app", "focus_app"):
@@ -381,4 +416,8 @@ def describe(action: dict) -> str:
         return "%s: %s" % (base, target.get("path") or "")
     if t in ("switch_workspace", "move_active_window_to_workspace"):
         return "%s: workspace %s" % (base, target.get("id"))
+    if t in ("set_nightlight", "set_bluetooth", "set_wifi", "set_touchpad", "set_power_mode"):
+        return "%s: %s" % (base, target.get("state"))
+    if t == "set_reminder":
+        return "%s: %s min (%s)" % (base, target.get("minutes"), target.get("message") or "")
     return base

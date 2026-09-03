@@ -15,6 +15,11 @@ _CONFIRM_TYPES = frozenset({
     "close_active_window",
     "toggle_fullscreen",
     "lock_screen",
+    "shutdown",
+    "reboot",
+    "logout",
+    "screen_record_start",
+    "screen_record_stop",
 })
 
 
