@@ -57,6 +57,8 @@ Item {
   readonly property bool errorPhase: root.phase === "idle" && root.error !== ""
   readonly property bool cancellable: root.recording || root.working || root.awaiting
   readonly property bool bubbleShown: true
+  readonly property int bubbleTextW:
+    root.awaiting || root.showResult || root.errorPhase ? 212 : 160
   readonly property int petSize: Math.max(48, Math.round(132 * root.petScale))
 
   // phase (display) -> sprite file under ui/pet/. Remap here or rename the PNGs.
@@ -200,8 +202,6 @@ Item {
       // ---- speech bubble (above the pet) ----
       // Sized by explicit content widths (no anchors.fill on the inner column)
       // so implicit sizes never form a cycle (which collapsed the window to 1px).
-      readonly property int bubbleTextW:
-        root.awaiting || root.showResult || root.errorPhase ? 212 : 150
       Rectangle {
         id: bubble
         visible: root.bubbleShown
@@ -216,12 +216,12 @@ Item {
 
         Column {
           id: bubbleCol
-          width: Math.max(bubbleTextW, actionRow.visible ? actionRow.width : 0)
+          width: Math.max(root.bubbleTextW, actionRow.visible ? actionRow.width : 0)
           anchors.centerIn: parent
           spacing: Style.space(6)
 
           Text {
-            width: bubbleTextW
+            width: root.bubbleTextW
             text: root.bubbleText()
             color: "#f2f2f2"
             font.family: Style.font.family
@@ -237,7 +237,7 @@ Item {
             height: Style.space(30)
 
             Button {
-              width: (bubbleTextW - Style.space(8)) * 0.5
+              width: (root.bubbleTextW - Style.space(8)) * 0.5
               height: Style.space(30)
               iconText: "\uF00C"          // ✓
               foreground: "#f2f2f2"
@@ -245,7 +245,7 @@ Item {
               onClicked: root.cmdCli(["confirm"])
             }
             Button {
-              width: (bubbleTextW - Style.space(8)) * 0.5
+              width: (root.bubbleTextW - Style.space(8)) * 0.5
               height: Style.space(30)
               iconText: "\uF00D"          // ✗
               foreground: "#f2f2f2"
@@ -272,7 +272,7 @@ Item {
         id: spriteArea
         width: root.petSize
         height: root.petSize
-        y: bubble.visible ? bubble.implicitHeight + Style.space(6) : 0
+        y: bubble.visible ? bubble.height + Style.space(6) : 0
         anchors.horizontalCenter: parent.horizontalCenter
 
         // ground shadow
