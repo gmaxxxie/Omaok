@@ -1,0 +1,30 @@
+{
+  "stt": {
+    "engine": "auto",
+    "model": null,
+    "language": "zh",
+    "timeout_secs": 120
+  },
+  "confirm_low": false,
+  "min_confidence": 0.6,
+  "ai": {
+    "enabled": true,
+    "backend": "pi-rpc",
+    "thinking": "off",
+    "model": null,
+    "timeout_secs": 60
+  },
+  "recorder": {
+    "device": "default",
+    "max_seconds": 30,
+    "min_seconds": 0.4
+  },
+  "paths": {
+    "roots": ["~", "~/Downloads", "~/Documents", "~/项目", "~/Desktop"]
+  },
+  "screenshot": {
+    "mode": "fullscreen",
+    "target": "save"
+  },
+  "workspaces": { "min": 1, "max": 10 }
+}

@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Runtime / local state (never commit)
+*.raw
+*.wav
+*.tmp
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+*.swp

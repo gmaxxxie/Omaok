@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "max.voice-control",
+  "name": "Voice Control",
+  "version": "1.0.0",
+  "author": "max",
+  "license": "MIT",
+  "description": "Safe, local-first voice control for Omarchy. Record with Voxtype (local model, no text injection), review the recognized action, confirm, then run allow-listed desktop actions.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "ui/VoiceControl.qml"
+  },
+  "barWidget": {
+    "displayName": "Voice Control",
+    "description": "Mic button that opens a safe voice-control assistant popover (record -> review -> confirm -> execute)",
+    "category": "Utility",
+    "allowMultiple": false
+  }
+}

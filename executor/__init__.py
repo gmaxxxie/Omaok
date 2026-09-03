@@ -1,0 +1,1 @@
+"""omarchy-voice-control package."""

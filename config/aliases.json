@@ -1,0 +1,34 @@
+{
+  "apps": {
+    "browser": "chromium",
+    "web browser": "chromium",
+    "浏览器": "chromium",
+    "firefox": "firefox",
+    "chromium": "chromium",
+    "terminal": "kitty",
+    "终端": "kitty",
+    "kitty": "kitty",
+    "files": "nautilus",
+    "file manager": "nautilus",
+    "文件管理器": "nautilus",
+    "nautilus": "nautilus",
+    "obsidian": "obsidian",
+    "notes": "obsidian",
+    "obsidian笔记": "obsidian"
+  },
+  "folders": {
+    "downloads": "~/Downloads",
+    "下载": "~/Downloads",
+    "documents": "~/Documents",
+    "文档": "~/Documents",
+    "projects": "~/项目",
+    "项目": "~/项目",
+    "desktop": "~/Desktop",
+    "桌面": "~/Desktop",
+    "pictures": "~/Pictures",
+    "图片": "~/Pictures",
+    "home": "~",
+    "主目录": "~"
+  },
+  "files": {}
+}

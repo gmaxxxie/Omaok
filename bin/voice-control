@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""Entry point for omarchy-voice-control. Dispatches to the plugin CLI."""
+import os
+import sys
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+from cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())
