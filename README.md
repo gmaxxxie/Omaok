@@ -101,6 +101,6 @@ same `state.json` phase file the popover reads:
   (awaiting → cancels the pending action; recording/processing → discards
   the audio; nothing is ever executed).
 - Toggle it from the popover (小飞马助手 switch) or via the CLI:
-  `omarchy-voice-control pet show|hide|toggle|pos <x> <y>|scale <s>`.
+  `omarchy-voice-control pet show|hide|toggle|pos <x> <y>|scale <s>|opacity <0.3-1>`.
 - Sprites live in `ui/pet/`; the phase → file mapping is the `sprites` object
   at the top of `ui/PetOverlay.qml` (rename the PNGs or remap there).
