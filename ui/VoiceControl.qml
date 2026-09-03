@@ -246,8 +246,8 @@ Panel {
             Toggle {
               id: petToggle
               width: parent.width - Style.space(8) - Style.space(42)
-              label: "小飞马助手"
-              description: "桌面宠物 · 点击开始/结束语音，可拖动"
+              label: "Pegasus assistant"
+              description: "Desktop pet · click to start/stop voice, draggable"
               checked: root.petVisible
               foreground: root.fg
               accent: Color.accent
@@ -262,7 +262,7 @@ Panel {
               height: Style.space(34)
               size: Style.space(18)
               iconText: "\uF01E"
-              tooltipText: "重置宠物位置"
+              tooltipText: "Reset pet position"
               foreground: root.fg
               hoverColor: root.fg
               anchors.verticalCenter: petToggle.verticalCenter
