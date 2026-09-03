@@ -10,8 +10,9 @@ Subcommands:
   refresh-provider       Re-probe Voxtype status into state.json
   catalog                Generate the machine command catalog (config/catalog.json)
   blocklist              Print the effective path blocklist
+  ai-daemon              Persistent pi-RPC intent daemon (warm AI, socket server)
   check                  Print provider status as JSON
-  pet [show|hide|toggle|pos <x> <y>|scale <s>]
+  pet [show|hide|toggle|pos <x> <y>|scale <s>|opacity <0.3-1>]
                          Desktop-mascot visibility/position (pet.json)
   test transcribe <wav>  Print what Voxtype returns for a file (no execution)
 """
@@ -252,6 +253,11 @@ def cmd_refresh_provider() -> int:
     return 0
 
 
+def cmd_ai_daemon() -> int:
+    cfg, _aliases = _load()
+    return intent_ai.daemon_main(cfg)
+
+
 def cmd_blocklist() -> int:
     print(json.dumps(blocklist_mod.load_blocklist(), ensure_ascii=False, indent=2))
     return 0
@@ -309,6 +315,14 @@ def cmd_pet(argv: list) -> int:
         pet_mod.save_pet({"scale": max(0.4, min(2.0, scale))})
         audit("pet scale %.2f" % scale)
         return 0
+    if sub == "opacity" and len(argv) >= 2:
+        try:
+            opacity = float(argv[1])
+        except ValueError:
+            return _err("pet opacity: expected a number, got %r" % argv[1])
+        pet_mod.save_pet({"opacity": max(0.3, min(1.0, opacity))})
+        audit("pet opacity %.2f" % opacity)
+        return 0
     return _err("pet: unknown subcommand %r" % sub)
 
 
@@ -350,6 +364,8 @@ def main(argv=None) -> int:
         return cmd_catalog()
     if command == "blocklist":
         return cmd_blocklist()
+    if command == "ai-daemon":
+        return cmd_ai_daemon()
     if command == "check":
         return cmd_check()
     if command == "pet":

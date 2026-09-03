@@ -92,6 +92,14 @@ class TestPetCli(unittest.TestCase):
         self.assertEqual(cli_mod.cmd_pet(["scale", "0.1"]), 0)
         self.assertGreaterEqual(pet_mod.load_pet()["scale"], 0.4)
 
+    def test_opacity_clamped(self):
+        self.assertEqual(cli_mod.cmd_pet(["opacity", "0.5"]), 0)
+        self.assertAlmostEqual(pet_mod.load_pet()["opacity"], 0.5)
+        self.assertEqual(cli_mod.cmd_pet(["opacity", "9"]), 0)
+        self.assertLessEqual(pet_mod.load_pet()["opacity"], 1.0)
+        self.assertEqual(cli_mod.cmd_pet(["opacity", "-1"]), 0)
+        self.assertGreaterEqual(pet_mod.load_pet()["opacity"], 0.3)
+
     def test_unknown_subcommand(self):
         self.assertNotEqual(cli_mod.cmd_pet(["teleport"]), 0)
 

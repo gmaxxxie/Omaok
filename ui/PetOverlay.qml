@@ -47,6 +47,7 @@ Item {
   property int petX: 72
   property int petY: 64
   property real petScale: 1.0
+  property real petOpacity: 0.7
   property bool dragging: false
   property bool hovered: false
 
@@ -56,10 +57,10 @@ Item {
   readonly property bool showResult: root.phase === "result"
   readonly property bool errorPhase: root.phase === "idle" && root.error !== ""
   readonly property bool cancellable: root.recording || root.working || root.awaiting
-  readonly property bool bubbleShown: true
+  readonly property bool bubbleShown: root.phase !== "idle" || root.errorPhase || root.hovered
   readonly property int bubbleTextW:
     root.awaiting || root.showResult || root.errorPhase ? 212 : 160
-  readonly property int petSize: Math.max(48, Math.round(132 * root.petScale))
+  readonly property int petSize: Math.max(48, Math.round(100 * root.petScale))
 
   // phase (display) -> sprite file under ui/pet/. Remap here or rename the PNGs.
   property var sprites: ({
@@ -112,6 +113,7 @@ Item {
     if (typeof o.x === "number") root.petX = Math.max(0, Math.round(o.x))
     if (typeof o.y === "number") root.petY = Math.max(0, Math.round(o.y))
     if (typeof o.scale === "number") root.petScale = Math.max(0.4, Math.min(2.0, o.scale))
+    if (typeof o.opacity === "number") root.petOpacity = Math.max(0.3, Math.min(1.0, o.opacity))
   }
 
   FileView {
@@ -154,7 +156,7 @@ Item {
       var ok = root.result && root.result.ok
       return (ok ? "\u2713 " : "\u2717 ") + (root.result ? root.result.message : "")
     }
-    return "Click to talk" // idle: persistent hint
+    return root.hovered ? "Click to talk" : "" // idle: only on hover
   }
 
   // ---- click semantics (identical to the popover's activate()) ----
@@ -204,7 +206,10 @@ Item {
       // so implicit sizes never form a cycle (which collapsed the window to 1px).
       Rectangle {
         id: bubble
-        visible: root.bubbleShown
+        // Always in layout (reserved slot above the pet) so showing/hiding it
+        // never moves the pet; fade controls visibility.
+        opacity: root.bubbleShown ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 130 } }
         width: bubbleCol.width + Style.space(22)
         height: bubbleCol.height + Style.space(14)
         radius: Style.space(11)
@@ -294,6 +299,8 @@ Item {
           id: spriteFloat
           width: parent.width
           height: parent.height
+          opacity: root.petOpacity
+          Behavior on opacity { NumberAnimation { duration: 150 } }
 
           // idle breathing bob
           SequentialAnimation on y {

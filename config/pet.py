@@ -20,6 +20,7 @@ PET_DEFAULTS = {
     "x": 72,      # pixels from the top-left corner of the screen
     "y": 64,
     "scale": 1.0,
+    "opacity": 0.7,    # 0.3 .. 1.0
 }
 
 
