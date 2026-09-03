@@ -156,7 +156,7 @@ class TestCliAiPath(unittest.TestCase):
         self.assertEqual(self.cli.load_state()["phase"], "result")
 
     def test_rule_miss_calls_ai_and_awaits_confirm(self):
-        self.cli.stt.transcribe.return_value = "bring up the download folder"  # genuine rule miss
+        self.cli.stt.transcribe.return_value = "organize my downloads folder"  # genuine rule miss
         with mock.patch.object(self.cli.intent_ai, "analyze", return_value={
             "type": "lock_screen", "target": {}, "confidence": 0.8,
             "source": "future_llm", "risk": "low",
@@ -170,7 +170,7 @@ class TestCliAiPath(unittest.TestCase):
         self.assertEqual(st["action"]["type"], "lock_screen")
 
     def test_ai_low_risk_auto_executes(self):
-        self.cli.stt.transcribe.return_value = "bring up the download folder"
+        self.cli.stt.transcribe.return_value = "organize my downloads folder"
         with mock.patch.object(self.cli.intent_ai, "analyze", return_value={
             "type": "open_folder", "raw_target": "downloads", "confidence": 0.8,
             "source": "future_llm", "risk": "low",

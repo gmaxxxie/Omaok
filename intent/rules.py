@@ -44,24 +44,46 @@ _SCREENSHOT_RE = re.compile(r"截图|截屏|屏幕截图|screenshot|take\s*a\s*s
 _FULLSCREEN_RE = re.compile(r"全屏|全屏幕|fullscreen|full\s*screen|toggle\s*fullscreen", re.I)
 
 _MOVE_WS_RE = re.compile(
-    r"(?:把\s*)?(?:当前\s*)?(?:这个\s*)?窗口\s*(?:移到|移动到|放到|移去)\s*工作区\s*(\d+)"
-    r"|(?:move|put)\s*(?:the\s*)?(?:active\s*)?(?:current\s*)?window\s*(?:to|into)\s*workspace\s*(\d+)"
-    r"|move\s*(?:to|into)\s*workspace\s*(\d+)",
+    r"(?:把\s*)?(?:当前\s*)?(?:这个\s*)?窗口\s*(?:移到|移动到|放到|移去)\s*工作区\s*([0-9]+|[一二两三四五六七八九十]+)"
+    r"|(?:把|将)\s*[^切移放\s]+\s*(?:切到|切换到|移到|移动到|放到)\s*工作区\s*([0-9]+|[一二两三四五六七八九十]+)"
+    r"|(?:move|put)\s*(?:the\s*)?(?:active\s*)?(?:current\s*)?window\s*(?:to|into)\s*workspace\s*([0-9]+)"
+    r"|move\s*(?:to|into)\s*workspace\s*([0-9]+)",
     re.I,
 )
 
 _SWITCH_WS_RE = re.compile(
-    r"(?:切换到|切到|到|前往)\s*工作区\s*(\d+)"
-    r"|工作区\s*(\d+)"
-    r"|go\s*(?:to)?\s*(?:workspace)?\s*(\d+)"
-    r"|switch\s*(?:to)?\s*(?:workspace)?\s*(\d+)"
-    r"|workspace\s*(\d+)",
+    r"(?:切换到|切到|到|前往)\s*工作区\s*([0-9]+|[一二两三四五六七八九十]+)"
+    r"|工作区\s*([0-9]+|[一二两三四五六七八九十]+)"
+    r"|go\s*(?:to)?\s*(?:workspace)?\s*([0-9]+)"
+    r"|switch\s*(?:to)?\s*(?:workspace)?\s*([0-9]+)"
+    r"|workspace\s*([0-9]+)",
     re.I,
 )
 
+_CN_DIGITS = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+
+
+def _to_arabic(s: str | None) -> str | None:
+    """工作区五 -> 5; 十二 -> 12. Returns None when not a valid number."""
+    if not s:
+        return None
+    if s.isdigit():
+        return s
+    if s in _CN_DIGITS:
+        return str(_CN_DIGITS[s])
+    if s == "十":
+        return "10"
+    if len(s) == 2 and s[0] in _CN_DIGITS and s[1] == "十":
+        return str(_CN_DIGITS[s[0]] * 10)
+    if len(s) == 2 and s[0] == "十" and s[1] in _CN_DIGITS:
+        return str(10 + _CN_DIGITS[s[1]])
+    if len(s) == 3 and s[0] in _CN_DIGITS and s[1] == "十" and s[2] in _CN_DIGITS:
+        return str(_CN_DIGITS[s[0]] * 10 + _CN_DIGITS[s[2]])
+    return None
+
 _FOLDER_RE = re.compile(
-    r"打开\s*(?:一下\s*)?(.+?(?:文件夹|目录))"
-    r"|open\s*(?:the\s*)?(.+?(?:folder|directory))",
+    r"(?:打开|调出|唤出|显示)\s*(?:一下\s*)?(.+?(?:文件夹|目录))"
+    r"|(?:open|bring up|pull up|show)\s*(?:the\s*)?(.+?(?:folder|directory))",
     re.I,
 )
 
@@ -72,8 +94,8 @@ _FILE_RE = re.compile(
 )
 
 _OPEN_RE = re.compile(
-    r"(?:打开|启动|开启|运行)\s*(?:一下\s*)?(.+)"
-    r"|(?:open|launch|start|run)\s+(.+)",
+    r"(?:打开|启动|开启|运行|调出|唤出)\s*(?:一下\s*)?(.+)"
+    r"|(?:open|launch|start|run|bring up)\s+(.+)",
     re.I,
 )
 
@@ -86,8 +108,11 @@ _FOCUS_RE = re.compile(
 
 _PLAY_PAUSE_RE = re.compile(
     r"播放\s*(?:音乐|歌曲|歌|首歌|音乐吧)?"
-    r"|放歌|放首歌|放音乐|开始播放|继续播放|接着放"
-    r"|暂停\s*(?:音乐|播放)?|停止播放|停歌"
+    r"|放歌|放首歌|放音乐|放点音乐|放点歌|来点音乐|来首歌|来一曲|来段音乐|整点音乐"
+    r"|开始播放|继续播放|接着放|接着播|接着放歌"
+    r"|暂停\s*(?:音乐|播放)?|停止播放|停歌|别放了"
+    r"|(?:想|要|给我)?(?:听|放)(?:个|首|点)?(?:音乐|歌|歌曲)"
+    r"|播\S*音乐\S*|音乐\S*(?:听|放|播)"
     r"|play\s*(?:music|some music|a song)?|pause\s*(?:music|the music)?|resume|stop playing",
     re.I,
 )
@@ -292,13 +317,15 @@ def parse(text: str) -> dict | None:
 
     m = _MOVE_WS_RE.search(t)
     if m:
-        ws = next((g for g in m.groups() if g is not None), None)
-        return _draft("move_active_window_to_workspace", raw_target=ws)
+        ws = _to_arabic(next((g for g in m.groups() if g is not None), None))
+        if ws:
+            return _draft("move_active_window_to_workspace", raw_target=ws)
 
     m = _SWITCH_WS_RE.search(t)
     if m:
-        ws = next((g for g in m.groups() if g is not None), None)
-        return _draft("switch_workspace", raw_target=ws)
+        ws = _to_arabic(next((g for g in m.groups() if g is not None), None))
+        if ws:
+            return _draft("switch_workspace", raw_target=ws)
 
     m = _FOLDER_RE.search(t)
     if m:
@@ -318,6 +345,9 @@ def parse(text: str) -> dict | None:
     m = _OPEN_RE.search(t)
     if m:
         name = next((g for g in m.groups() if g and g.strip()), None)
+        if name:
+            # Strip launch-package suffixes so "微信软件/程序" resolves to 微信.
+            name = re.sub(r"(软件|程序|应用)\s*$", "", name.strip())
         return _draft("open_app", raw_target=(name or "").strip())
 
     return None
