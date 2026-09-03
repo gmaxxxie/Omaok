@@ -77,14 +77,41 @@ class TestAnalyze(unittest.TestCase):
             rpc.assert_not_called()
 
     def test_returns_valid_draft(self):
-        with mock.patch.object(intent_ai, "_rpc_prompt", return_value='{"type":"open_app","target":{"name":"browser"},"confidence":0.8}'):
+        with mock.patch.object(intent_ai, "_daemon_request", return_value=None), \
+             mock.patch.object(intent_ai, "_rpc_prompt", return_value='{"type":"open_app","target":{"name":"browser"},"confidence":0.8}'):
             d = intent_ai.analyze("please open the browser", {"ai": {"enabled": True, "timeout_secs": 30}})
             self.assertEqual(d["type"], "open_app")
             self.assertEqual(d["source"], "future_llm")
 
     def test_model_garbage_returns_none(self):
-        with mock.patch.object(intent_ai, "_rpc_prompt", return_value="I don't know"):
+        with mock.patch.object(intent_ai, "_daemon_request", return_value=None), \
+             mock.patch.object(intent_ai, "_rpc_prompt", return_value="I don't know"):
             self.assertIsNone(intent_ai.analyze("whatever", {"ai": {"enabled": True, "timeout_secs": 30}}))
+
+    def test_daemon_roundtrip_via_socket(self):
+        """daemon_main + _daemon_request over a real Unix socket (pi stubbed)."""
+        import threading
+        import time
+        proc_stub = mock.Mock()
+        proc_stub.poll.return_value = None  # daemon thinks pi is alive
+        with mock.patch.object(intent_ai, "_spawn_pi", return_value=proc_stub), \
+             mock.patch.object(intent_ai, "_send"), \
+             mock.patch.object(intent_ai, "_prompt_on", return_value='{"type":"open_folder","target":{"name":"downloads"},"confidence":0.8}'):
+            cfg = {"ai": {"enabled": True, "timeout_secs": 30, "idle_secs": 30}}
+            thread = threading.Thread(target=intent_ai.daemon_main, args=(cfg,), daemon=True)
+            thread.start()
+            for _ in range(100):
+                if os.path.exists(intent_ai._sock_path()):
+                    break
+                time.sleep(0.05)
+            draft = intent_ai._daemon_request("打开下载文件夹", cfg)
+            self.assertIsNotNone(draft)
+            self.assertEqual(draft["type"], "open_folder")
+            self.assertEqual(draft["source"], "future_llm")
+            try:
+                os.unlink(intent_ai._sock_path())
+            except OSError:
+                pass
 
 
 class TestCliAiPath(unittest.TestCase):

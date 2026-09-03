@@ -22,6 +22,34 @@ VOXTYPE = shutil.which("voxtype")
 RECORDER_BIN = shutil.which("pw-record")
 MODELS_DIR = os.path.expanduser("~/.local/share/voxtype/models")
 
+_ASSISTANT_CFG_PATH = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "omarchy-voice-control", "voxtype-assistant.toml")
+
+
+def _write_assistant_config(cfg: dict) -> str:
+    """Write the assistant's own voxtype config (fast int8 engine) so the user's
+    dictation config (~/.config/voxtype/config.toml) is never touched.
+    Returns the config path."""
+    stt = cfg.get("stt") or {}
+    engine = stt.get("engine") or "sensevoice"
+    if engine == "auto":
+        engine = "sensevoice"
+    model = stt.get("model") or "small-int8"  # 2x faster load/infer than fp32
+    language = stt.get("language") or "zh"
+    content = (
+        'engine = "%s"\n'
+        '[sensevoice]\n'
+        'model = "%s"\n'
+        'language = "%s"\n'
+        'use_itn = true\n'
+        'on_demand_loading = false\n'
+        '[output]\n'
+        'mode = "file"\n'  # irrelevant for transcribe (stdout), kept harmless
+    ) % (engine, model, language)
+    os.makedirs(os.path.dirname(_ASSISTANT_CFG_PATH), exist_ok=True)
+    with open(_ASSISTANT_CFG_PATH, "w", encoding="utf-8") as fh:
+        fh.write(content)
+    return _ASSISTANT_CFG_PATH
+
 
 class STTError(RuntimeError):
     """Raised when transcription cannot be produced safely."""
@@ -31,14 +59,9 @@ def transcribe(wav_path: str, cfg: dict) -> str:
     """Return the final transcript text. Never injects input."""
     if not VOXTYPE:
         raise STTError("voxtype binary not found on PATH")
-    cmd = [VOXTYPE, "-q", "transcribe"]
-    stt = cfg.get("stt") or {}
-    engine = stt.get("engine")
-    # `transcribe` accepts only --engine; engine language/model come from Voxtype's config.
-    if engine and engine != "auto":
-        cmd += ["--engine", engine]
-    cmd += [wav_path]
-    timeout = int(stt.get("timeout_secs", 120))
+    _write_assistant_config(cfg)
+    cmd = [VOXTYPE, "-q", "-c", _ASSISTANT_CFG_PATH, "transcribe", wav_path]
+    timeout = int((cfg.get("stt") or {}).get("timeout_secs", 120))
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout,

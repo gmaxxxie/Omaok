@@ -31,6 +31,7 @@ DEFAULT_CONFIG = {
         "thinking": "off",         # non-thinking for speed
         "model": None,             # None -> pi default (deepseek-v4-flash)
         "timeout_secs": 60,
+        "idle_secs": 900,          # ai-daemon exits after this idle (auto-respawned)
     },
     "recorder": {
         "device": "default",

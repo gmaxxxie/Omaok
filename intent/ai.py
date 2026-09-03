@@ -44,20 +44,13 @@ def _catalog_summary() -> str:
         lines.append("  %s — %s" % (a.get("type"), a.get("description")))
     lines.append("Apps installed on this machine (use these names for open_app/focus_app):")
     apps = cat.get("apps") or []
-    for a in apps[:160]:
+    for a in apps[:120]:
         name = a.get("name")
         if name:
             lines.append("  - %s" % name)
     bins = cat.get("user_bins") or []
     if bins:
         lines.append("User scripts in ~/.local/bin: %s" % ", ".join(bins[:30]))
-    cmds = cat.get("omarchy_commands") or []
-    if cmds:
-        lines.append("Some Omarchy commands available:")
-        for c in cmds[:40]:
-            route = c.get("route") or ""
-            summary = (c.get("summary") or "")[:70]
-            lines.append("  %s — %s" % (route, summary))
     return "\n".join(lines)
 
 
@@ -155,11 +148,8 @@ def _to_draft(obj: dict) -> dict | None:
     }
 
 
-def _rpc_prompt(prompt: str, cfg: dict, timeout: float) -> str:
-    """Spawn pi RPC, run one prompt with thinking off, return final assistant text.
-
-    Uses non-blocking reads + a hard deadline so this can never hang the caller.
-    """
+def _spawn_pi(cfg: dict):
+    """Spawn a `pi --mode rpc --no-session` subprocess with non-blocking stdout."""
     import fcntl
     import os
 
@@ -176,14 +166,21 @@ def _rpc_prompt(prompt: str, cfg: dict, timeout: float) -> str:
         )
     except FileNotFoundError:
         raise AIError("pi binary not found on PATH")
-
     fd = proc.stdout.fileno()
     flags = fcntl.fcntl(fd, fcntl.F_GETFL)
     fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+    return proc
+
+
+def _prompt_on(proc, prompt: str, timeout: float) -> str:
+    """Run one prompt (thinking off) against an existing pi RPC process.
+    Non-blocking reads + hard deadline so it can never hang the caller."""
+    import os
+
+    fd = proc.stdout.fileno()
     buffer = ""
 
     def poll_lines(deadline):
-        """Yield complete JSONL lines from the non-blocking fd until deadline/exits."""
         nonlocal buffer
         while time.time() < deadline:
             r, _, _ = select.select([fd], [], [], 0.2)
@@ -208,27 +205,33 @@ def _rpc_prompt(prompt: str, cfg: dict, timeout: float) -> str:
         except (BrokenPipeError, ValueError, OSError) as exc:
             raise AIError("pi rpc pipe closed: %s" % exc)
 
+    send({"type": "prompt", "id": "p", "message": prompt})
+    deadline = time.time() + timeout
+    settled = False
+    for line in poll_lines(deadline):
+        event = _parse(line)
+        if event is None:
+            continue
+        if event.get("type") == "agent_settled":
+            settled = True
+            break
+    if not settled:
+        raise AIError("pi agent did not settle within %.0fs" % timeout)
+    send({"type": "get_last_assistant_text", "id": "g"})
+    deadline = time.time() + 15
+    for line in poll_lines(deadline):
+        event = _parse(line)
+        if event and event.get("type") == "response" and event.get("id") == "g":
+            return (event.get("data") or {}).get("text") or ""
+    raise AIError("no assistant text returned")
+
+
+def _rpc_prompt(prompt: str, cfg: dict, timeout: float) -> str:
+    """One-shot: spawn pi RPC, run one prompt, return text (fallback path)."""
+    proc = _spawn_pi(cfg)
     try:
-        send({"type": "set_thinking_level", "id": "th", "level": "off"})
-        send({"type": "prompt", "id": "p", "message": prompt})
-        deadline = time.time() + timeout
-        settled = False
-        for line in poll_lines(deadline):
-            event = _parse(line)
-            if event is None:
-                continue
-            if event.get("type") == "agent_settled":
-                settled = True
-                break
-        if not settled:
-            raise AIError("pi agent did not settle within %.0fs" % timeout)
-        send({"type": "get_last_assistant_text", "id": "g"})
-        deadline = time.time() + 15
-        for line in poll_lines(deadline):
-            event = _parse(line)
-            if event and event.get("type") == "response" and event.get("id") == "g":
-                return (event.get("data") or {}).get("text") or ""
-        raise AIError("no assistant text returned")
+        _send(proc, {"type": "set_thinking_level", "id": "th", "level": "off"})
+        return _prompt_on(proc, prompt, timeout)
     finally:
         try:
             proc.terminate()
@@ -240,7 +243,128 @@ def _rpc_prompt(prompt: str, cfg: dict, timeout: float) -> str:
                 pass
 
 
-def _send(proc, command: dict) -> None:  # pragma: no cover - retained for tests/back-compat
+def _sock_path() -> str:
+    from state import runtime_dir
+    return os.path.join(runtime_dir(), "ai.sock")
+
+
+def _spawn_daemon() -> None:
+    """Start the persistent ai-daemon detached (owns the warm pi process)."""
+    import shutil
+    import sys
+    entry = shutil.which("omarchy-voice-control")
+    if not entry and sys.argv and sys.argv[0]:
+        entry = sys.argv[0]
+    if not entry:
+        return
+    try:
+        subprocess.Popen(
+            [entry, "ai-daemon"], start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+
+
+def _daemon_request(transcript: str, cfg: dict) -> dict | None:
+    """Ask the persistent ai-daemon for a draft. Returns the draft or None."""
+    import socket
+    path = _sock_path()
+    for attempt in range(2):
+        try:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(int((cfg.get("ai") or {}).get("timeout_secs", 60)) + 15)
+            sock.connect(path)
+            sock.sendall(json.dumps({"transcript": transcript}).encode("utf-8"))
+            chunks = []
+            while True:
+                data = sock.recv(65536)
+                if not data:
+                    break
+                chunks.append(data)
+            sock.close()
+            resp = json.loads(b"".join(chunks).decode("utf-8", "replace"))
+            return resp.get("draft")
+        except (OSError, ValueError):
+            if attempt == 0:
+                _spawn_daemon()
+                time.sleep(2.0)  # let it bind the socket
+                continue
+            return None
+        except Exception:
+            return None
+    return None
+
+
+def daemon_main(cfg: dict) -> int:
+    """Persistent ai-daemon: owns one warm pi RPC process, serves JSON-lines over a
+    Unix socket. Exits after ai.idle_secs of inactivity (client respawns it)."""
+    import socket
+    ai = cfg.get("ai") or {}
+    idle_secs = float(ai.get("idle_secs", 900))
+    timeout = float(ai.get("timeout_secs", 60))
+    path = _sock_path()
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        server.bind(path)
+    except OSError:
+        return 1  # another daemon already owns the socket
+    server.listen(8)
+    proc = None
+    last_active = time.time()
+    try:
+        while True:
+            if proc is None or proc.poll() is not None:
+                try:
+                    proc = _spawn_pi(cfg)
+                    _send(proc, {"type": "set_thinking_level", "id": "th", "level": "off"})
+                except AIError:
+                    time.sleep(2)
+                    continue
+            server.settimeout(1.0)
+            try:
+                conn, _ = server.accept()
+            except socket.timeout:
+                if time.time() - last_active > idle_secs:
+                    break
+                continue
+            with conn:
+                last_active = time.time()
+                data = conn.recv(65536).decode("utf-8", "replace").strip()
+                if not data:
+                    continue
+                try:
+                    req = json.loads(data)
+                except ValueError:
+                    conn.sendall(json.dumps({"ok": False, "error": "bad request"}).encode())
+                    continue
+                transcript = str(req.get("transcript") or "")
+                try:
+                    text = _prompt_on(proc, _build_prompt(transcript), timeout)
+                    obj = _extract_json(text)
+                    draft = _to_draft(obj) if obj else None
+                    conn.sendall(json.dumps({"ok": True, "draft": draft}).encode("utf-8"))
+                except AIError as exc:
+                    conn.sendall(json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+    finally:
+        try:
+            server.close()
+            os.unlink(path)
+        except Exception:
+            pass
+        if proc is not None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+    return 0
+
+
+def _send(proc, command: dict) -> None:
     try:
         proc.stdin.write(json.dumps(command) + "\n")
         proc.stdin.flush()
@@ -268,12 +392,17 @@ def _parse(line: str) -> dict | None:
 
 
 def analyze(transcript: str, cfg: dict) -> dict | None:
-    """Return an AI Action draft, or None if the model produced nothing valid."""
+    """Return an AI Action draft, or None if the model produced nothing valid.
+    Prefers the persistent ai-daemon (warm pi), falls back to a one-shot RPC."""
     if not transcript or len(transcript.strip()) < 2:
         return None
     ai = cfg.get("ai") or {}
     if not ai.get("enabled", True):
         return None
+    draft = _daemon_request(transcript, cfg)
+    if draft is not None:
+        return draft
+    # Fallback: spawn a one-shot pi RPC (cold, slower but reliable).
     timeout = float(ai.get("timeout_secs", 60))
     try:
         text = _rpc_prompt(_build_prompt(transcript), cfg, timeout)

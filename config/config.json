@@ -1,7 +1,7 @@
 {
   "stt": {
     "engine": "auto",
-    "model": null,
+    "model": "small-int8",
     "language": "zh",
     "timeout_secs": 120
   },
@@ -14,8 +14,9 @@
     "enabled": true,
     "backend": "pi-rpc",
     "thinking": "off",
-    "model": null,
-    "timeout_secs": 60
+    "model": "small-int8",
+    "timeout_secs": 60,
+    "idle_secs": 900
   },
   "recorder": {
     "device": "default",
