@@ -79,6 +79,7 @@ Panel {
     root.result = o.result || null
     root.provider = o.provider || null
     root.action = o.action || null
+    root.buildModelOptions()
   }
 
   FileView {
@@ -183,6 +184,9 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      // While a model-picker popup or its search field owns the keys, suspend
+      // the panel catcher so typing/j-k inside the picker isn't double-driven.
+      blocked: (sttModelPicker.popupOpen || aiModelPicker.popupOpen || aiThinkingPicker.popupOpen)
       onCloseRequested: root.close()
       onActivateRequested: root.activate()
       onTabRequested: function (dir) { root.moveFocus(dir) }
@@ -239,6 +243,44 @@ Panel {
             font.pixelSize: Style.font.caption
             wrapMode: Text.Wrap
             textFormat: Text.PlainText
+          }
+
+          // ---- STT model picker ----
+          Dropdown {
+            id: sttModelPicker
+            label: "Voxtype model"
+            width: parent.width
+            value: root.provider && root.provider.stt_engine ? (root.provider.stt_engine + "/" + root.provider.stt_model) : ""
+            options: root.sttModelOptions
+            foreground: root.fg
+            accent: Color.accent
+            fontFamily: root.barFont
+            onChanged: function (v) { root.cmd("config set stt.model " + v) }
+          }
+
+          // ---- AI intent model + thinking ----
+          SearchableDropdown {
+            id: aiModelPicker
+            label: "Intent model (pi)"
+            width: parent.width
+            placeholderText: "Search models…"
+            value: root.provider && root.provider.ai ? (root.provider.ai.model || "default") : ""
+            options: root.aiModelOptions
+            foreground: root.fg
+            accent: Color.accent
+            fontFamily: root.barFont
+            onChanged: function (v) { root.cmd("config set ai.model " + v) }
+          }
+          Dropdown {
+            id: aiThinkingPicker
+            label: "Intent thinking"
+            width: parent.width
+            value: root.provider && root.provider.ai ? root.provider.ai.thinking : "off"
+            options: ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
+            foreground: root.fg
+            accent: Color.accent
+            fontFamily: root.barFont
+            onChanged: function (v) { root.cmd("config set ai.thinking " + v) }
           }
 
           PanelSeparator {
@@ -491,8 +533,38 @@ Panel {
     return "Voxtype unavailable" + (root.provider.message ? ": " + root.scrub(root.provider.message) : "")
   }
 
+  // Model picker option arrays, rebuilt on every state parse so they stay in
+  // sync with the provider block written by `refresh-provider`.
+  property var sttModelOptions: []
+  property var aiModelOptions: []
+
+  function buildModelOptions() {
+    var prov = root.provider
+    var stt = []
+    if (prov && prov.stt_models) {
+      for (var i = 0; i < prov.stt_models.length; i++) {
+        var m = prov.stt_models[i]
+        stt.push({ value: m.engine + "/" + m.model, label: m.engine + "/" + m.model })
+      }
+    }
+    root.sttModelOptions = stt
+
+    var ai = []
+    ai.push({ value: "default", label: "default (pi default)" })
+    if (prov && prov.ai && prov.ai.models) {
+      for (var j = 0; j < prov.ai.models.length; j++) {
+        var am = prov.ai.models[j]
+        ai.push({ value: am.id, label: am.label })
+      }
+    }
+    root.aiModelOptions = ai
+  }
+
   function moveFocus(dir) {
     var list = []
+    if (sttModelPicker.enabled) list.push(sttModelPicker)
+    if (aiModelPicker.enabled) list.push(aiModelPicker)
+    if (aiThinkingPicker.enabled) list.push(aiThinkingPicker)
     if (micBtn.enabled) list.push(micBtn)
     if (root.awaiting && confirmBtn) list.push(confirmBtn)
     if (root.awaiting && cancelBtn) list.push(cancelBtn)

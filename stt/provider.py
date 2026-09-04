@@ -51,6 +51,82 @@ def _write_assistant_config(cfg: dict) -> str:
     return _ASSISTANT_CFG_PATH
 
 
+def list_installed_models() -> list[dict]:
+    """Enumerate the STT models actually downloaded on this machine, as a list
+    of {engine, model} pairs the assistant config can use.
+
+    Sources, in order of authority:
+      1. `voxtype info models` output (the tool's own catalog) — parsed for
+         engines that mark a model "installed".
+      2. A directory scan of ~/.local/share/voxtype/models/ as a fallback so
+         the picker still works if voxtype's catalog can't be parsed.
+    Returns [] when voxtype/the models dir is unavailable.
+    """
+    installed: list[dict] = []
+
+    # Primary: voxtype's own catalog.
+    if VOXTYPE:
+        try:
+            proc = subprocess.run(
+                [VOXTYPE, "info", "models"], capture_output=True, text=True, timeout=15,
+            )
+            if proc.returncode == 0:
+                installed = _parse_installed_models(proc.stdout)
+        except Exception:
+            installed = []
+
+    # Always also scan the models dir: voxtype's catalog can omit variants that
+    # are on disk (e.g. sensevoice-small-int8, which the assistant config uses)
+    # or list ones marked only as downloadable. The dir is ground truth.
+    if os.path.isdir(MODELS_DIR):
+        try:
+            for name in sorted(os.listdir(MODELS_DIR)):
+                if name.startswith("sensevoice-") and os.path.isdir(os.path.join(MODELS_DIR, name)):
+                    installed.append({"engine": "sensevoice", "model": name[len("sensevoice-"):]})
+                elif name.startswith("ggml-") and name.endswith(".bin"):
+                    installed.append({"engine": "whisper", "model": name[len("ggml-"):-len(".bin")]})
+        except OSError:
+            pass
+
+    # Dedup (a model may appear under multiple engines is unlikely, but guard).
+    seen = set()
+    out = []
+    for m in installed:
+        key = (m.get("engine"), m.get("model"))
+        if key not in seen and m.get("engine") and m.get("model"):
+            seen.add(key)
+            out.append({"engine": m["engine"], "model": m["model"]})
+    return out
+
+
+def _parse_installed_models(text: str) -> list[dict]:
+    """Parse `voxtype info models` output. Lines look like:
+        whisper
+                     tiny
+        installed     base
+        installed     small (default)
+        sensevoice
+        installed     small-fp32  (download: ...)
+    Returns [{engine, model}] for every line prefixed with 'installed'.
+    """
+    out: list[dict] = []
+    engine = None
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("installed") or line.startswith("default"):
+            rest = line.split(None, 1)[1] if len(line.split(None, 1)) > 1 else ""
+            model = rest.split()[0] if rest.split() else ""
+            if model and engine:
+                out.append({"engine": engine, "model": model})
+        elif raw and raw[0].isspace() is False and not raw.startswith("Model catalog"):
+            candidate = line.rstrip(":")
+            if candidate and not candidate.startswith("-") and " " not in candidate and candidate != "engine":
+                engine = candidate
+    return out
+
+
 class STTError(RuntimeError):
     """Raised when transcription cannot be produced safely."""
 

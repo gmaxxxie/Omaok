@@ -10,6 +10,9 @@ Subcommands:
   confirm                Execute the pending confirmed Action
   cancel-action          Clear the pending Action
   refresh-provider       Re-probe Voxtype status into state.json
+  config get [path]      Print config (or one dotted path)
+  config set <path> <v>  Persist a setting (stt.*, ai.*) to user config
+  models [stt|ai]        List installed STT / available AI models as JSON
   catalog                Generate the machine command catalog (config/catalog.json)
   blocklist              Print the effective path blocklist
   ai-daemon              Persistent pi-RPC intent daemon (warm AI, socket server)
@@ -375,8 +378,127 @@ def cmd_cancel_action() -> int:
 def cmd_refresh_provider() -> int:
     cfg, _aliases = _load()
     st = load_state()
-    st["provider"] = stt.check_status(cfg)
+    st["provider"] = _provider_info(cfg)
     write_state(st)
+    return 0
+
+
+def _provider_info(cfg: dict) -> dict:
+    """Rich provider block for the popup: Voxtype availability plus the two
+    pickers (STT model, AI intent model + thinking) and their options."""
+    stt_status = stt.check_status(cfg)
+    ai = cfg.get("ai") or {}
+    # Current selections (defaults mirrored from config).
+    cur_stt_engine = (cfg.get("stt") or {}).get("engine") or "auto"
+    cur_stt_model = (cfg.get("stt") or {}).get("model") or "small-int8"
+    stt_status["stt_models"] = [
+        {
+            "engine": m["engine"],
+            "model": m["model"],
+            "label": "%s/%s" % (m["engine"], m["model"]),
+            "current": m["engine"] == cur_stt_engine and m["model"] == cur_stt_model,
+        }
+        for m in stt.list_installed_models()
+    ]
+    stt_status["stt_engine"] = cur_stt_engine
+    stt_status["stt_model"] = cur_stt_model
+
+    # AI intent layer: current model/thinking + the ready-model option list.
+    ai_models = intent_ai.list_available_models(cfg)
+    cur_ai_model = ai.get("model") or ""
+    stt_status["ai"] = {
+        "enabled": bool(ai.get("enabled", True)),
+        "backend": ai.get("backend") or "pi-rpc",
+        "model": cur_ai_model,
+        "thinking": intent_ai._thinking_level(cfg),
+        "models": ai_models,
+    }
+    return stt_status
+
+
+def cmd_config(argv: list) -> int:
+    """`config get [path]` / `config set <path> <value>` — read or persist a
+    plugin setting to the user override file. Supported paths:
+      stt.engine, stt.model, stt.language
+      ai.enabled, ai.backend, ai.model, ai.thinking
+    `config set ai.*` restarts the ai-daemon so a model/thinking change applies
+    to the warm pi process."""
+    if not argv or argv[0] == "get":
+        cfg, _aliases = _load()
+        path = argv[1] if len(argv) > 1 else None
+        if path is None:
+            print(json.dumps(cfg, ensure_ascii=False, indent=2))
+            return 0
+        node = cfg
+        for part in path.split("."):
+            if not isinstance(node, dict) or part not in node:
+                return _err("config: unknown path %r" % path)
+            node = node[part]
+        print(json.dumps(node, ensure_ascii=False, indent=2))
+        return 0
+    if argv[0] != "set" or len(argv) < 3:
+        return _err("usage: config set <path> <value>")
+    path, value = argv[1], argv[2]
+    allowed = {"stt.engine", "stt.model", "stt.language", "ai.enabled", "ai.backend", "ai.model", "ai.thinking"}
+    if path not in allowed:
+        return _err("config set: unsupported path %r (allowed: %s)" % (path, ", ".join(sorted(allowed))))
+
+    if path == "ai.enabled":
+        patch = {"ai": {"enabled": value.lower() in ("1", "true", "yes", "on")}}
+    elif path == "ai.thinking":
+        level = value.lower()
+        if level not in ("off", "minimal", "low", "medium", "high", "xhigh", "max"):
+            return _err("config set ai.thinking: invalid level %r" % value)
+        patch = {"ai": {"thinking": level}}
+    elif path == "stt.engine":
+        patch = {"stt": {"engine": value}}
+    elif path == "stt.model":
+        # Accept either "engine/model" or a bare model id (resolved against the
+        # installed list to keep the engine in sync).
+        engine, model = (value.split("/") + [None])[:2] if "/" in value else (None, value)
+        installed = stt.list_installed_models()
+        if model is None:
+            return _err("config set stt.model: expected engine/model")
+        if engine is None:
+            match = next((m for m in installed if m["model"] == model), None)
+            if match is None:
+                return _err("config set stt.model: model %r not installed" % model)
+            engine = match["engine"]
+        elif not any(m["engine"] == engine and m["model"] == model for m in installed):
+            return _err("config set stt.model: %s/%s not installed" % (engine, model))
+        patch = {"stt": {"engine": engine, "model": model}}
+    elif path == "stt.language":
+        patch = {"stt": {"language": value}}
+    elif path == "ai.backend":
+        if value != "pi-rpc":
+            return _err("config set ai.backend: only 'pi-rpc' is supported")
+        patch = {"ai": {"backend": value}}
+    else:  # ai.model
+        if value and value not in {"null", "none", "default"}:
+            ready = {m["id"] for m in intent_ai.list_available_models(_load()[0])}
+            if value not in ready:
+                return _err("config set ai.model: %r not available (run `models ai`)" % value)
+        patch = {"ai": {"model": None if value in ("", "null", "none", "default") else value}}
+
+    settings.save_user_config(patch)
+    audit("config set %s = %s" % (path, value))
+    if path.startswith("ai.") and path != "ai.enabled":
+        intent_ai.restart_daemon()  # warm pi must pick up the new model/thinking
+    cmd_refresh_provider()
+    return 0
+
+
+def cmd_models(argv: list) -> int:
+    """`models stt` / `models ai` — print the available model lists as JSON."""
+    cfg, _aliases = _load()
+    if argv and argv[0] == "stt":
+        print(json.dumps(stt.list_installed_models(), ensure_ascii=False, indent=2))
+        return 0
+    if argv and argv[0] == "ai":
+        refresh = len(argv) > 1 and argv[1] == "refresh"
+        print(json.dumps(intent_ai.list_available_models(cfg, refresh=refresh), ensure_ascii=False, indent=2))
+        return 0
+    print(json.dumps({"stt": stt.list_installed_models(), "ai": intent_ai.list_available_models(cfg)}, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -489,6 +611,10 @@ def main(argv=None) -> int:
         return cmd_cancel_action()
     if command == "refresh-provider":
         return cmd_refresh_provider()
+    if command == "config":
+        return cmd_config(argv[1:])
+    if command == "models":
+        return cmd_models(argv[1:])
     if command == "catalog":
         return cmd_catalog()
     if command == "blocklist":

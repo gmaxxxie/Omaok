@@ -83,6 +83,26 @@ def load_config() -> dict:
     return cfg
 
 
+def user_config_path() -> str:
+    """Path of the user override config file (may not exist yet)."""
+    return os.path.join(USER_CONFIG_DIR, "config.json")
+
+
+def save_user_config(patch: dict) -> dict:
+    """Deep-merge a partial update into the user override config file and
+    return the resulting merged user config. Creates the file atomically;
+    never touches the plugin's shipped defaults."""
+    os.makedirs(USER_CONFIG_DIR, exist_ok=True)
+    path = user_config_path()
+    existing = _load_json(path, None) or {}
+    merged = _deep_merge(existing, patch)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(merged, fh, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+    return merged
+
+
 def load_aliases() -> dict:
     """Merge default aliases with the user override file."""
     default_path = os.path.join(PLUGIN_DIR, "config", "aliases.json")

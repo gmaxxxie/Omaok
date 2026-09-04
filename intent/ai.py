@@ -157,6 +157,130 @@ def _to_draft(obj: dict) -> dict | None:
     }
 
 
+def _thinking_level(cfg: dict) -> str:
+    """Resolve the configured pi thinking level (default 'off' for speed).
+    The QML intent picker sets ai.thinking; anything unrecognised falls back
+    to 'off' so a bad value can never slow the intent layer."""
+    level = (cfg.get("ai") or {}).get("thinking") or "off"
+    valid = {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
+    return level if level in valid else "off"
+
+
+def list_available_models(cfg: dict, refresh: bool = False) -> list[dict]:
+    """Enumerate the intent models available on this machine: every pi model
+    whose provider is authenticated (ready). Returns a list of
+    {id, label, provider, model, thinking, images, ready}.
+
+    Cheap fast-path: `pi auth check --provider <p>` per provider (~0.3s each,
+    cached) then `pi --list-models` (~1s) filtered to ready providers. A stale
+    cache (10 min) avoids re-running the provider probes on every popover open.
+    """
+    import io  # noqa: F401  (unused; kept for clarity)
+    cache_path = os.path.join(settings.USER_CONFIG_DIR, "ai-models.json")
+    cache_ttl = float((cfg.get("ai") or {}).get("models_cache_secs", 600))
+    if not refresh and os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r", encoding="utf-8") as fh:
+                cached = json.load(fh)
+            if (
+                isinstance(cached, dict)
+                and isinstance(cached.get("models"), list)
+                and time.time() - float(cached.get("ts", 0)) < cache_ttl
+            ):
+                return cached["models"]
+        except Exception:
+            pass
+
+    models = _probe_pi_models()
+    try:
+        os.makedirs(settings.USER_CONFIG_DIR, exist_ok=True)
+        with open(cache_path, "w", encoding="utf-8") as fh:
+            json.dump({"ts": time.time(), "models": models}, fh)
+    except Exception:
+        pass
+    return models
+
+
+def _probe_pi_models() -> list[dict]:
+    """Run pi once, filter to providers that are configured on this machine.
+
+    A provider counts as available if it has credentials in ~/.pi/agent/auth.json
+    (api_key/access/token). We deliberately do NOT gate on `pi auth check --provider`:
+    that command misreports volcengine-plan/volcengine-agent-plan as not_ready
+    even though those models are the pi default and respond correctly (verified
+    live). auth.json is the reliable "installed locally" source of truth.
+    """
+    configured = _configured_providers()
+
+    models: list[dict] = []
+    try:
+        proc = subprocess.run(
+            ["pi", "--list-models"], capture_output=True, text=True, timeout=30,
+        )
+        if proc.returncode != 0:
+            return models
+        for line in (proc.stdout or "").splitlines():
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            provider, model = parts[0], parts[1]
+            if model.startswith("model") or provider == "provider":
+                continue
+            if provider not in configured:
+                continue
+            thinking = False
+            images = False
+            for token in parts[2:]:
+                if token in ("yes", "no"):
+                    if thinking and images:
+                        break
+                    if not thinking:
+                        thinking = token == "yes"
+                    elif not images:
+                        images = token == "yes"
+            models.append({
+                "id": "%s/%s" % (provider, model),
+                "label": "%s · %s" % (provider, model),
+                "provider": provider,
+                "model": model,
+                "thinking": bool(thinking),
+                "images": bool(images),
+                "ready": True,
+            })
+    except Exception:
+        pass
+    return models
+
+
+def _configured_providers() -> set:
+    """Return provider names that have credentials in ~/.pi/agent/auth.json."""
+    out: set = set()
+    for path in (
+        os.path.expanduser("~/.pi/agent/auth.json"),
+        os.path.expanduser("~/.config/pi/auth.json"),
+    ):
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                continue
+            for provider, v in data.items():
+                if not isinstance(v, dict):
+                    continue
+                if any(v.get(k) for k in ("key", "access", "token", "refresh")):
+                    out.add(provider)
+            break  # first readable auth file wins
+        except Exception:
+            continue
+    return out
+
+
+_PI_PROVIDERS = (
+    "deepseek", "opencode", "opencode-go", "xai",
+    "volcengine-agent-plan", "volcengine-plan",
+)
+
+
 def _spawn_pi(cfg: dict):
     """Spawn a `pi --mode rpc --no-session` subprocess with non-blocking stdout."""
     import fcntl
@@ -239,7 +363,7 @@ def _rpc_prompt(prompt: str, cfg: dict, timeout: float) -> str:
     """One-shot: spawn pi RPC, run one prompt, return text (fallback path)."""
     proc = _spawn_pi(cfg)
     try:
-        _send(proc, {"type": "set_thinking_level", "id": "th", "level": "off"})
+        _send(proc, {"type": "set_thinking_level", "id": "th", "level": _thinking_level(cfg)})
         return _prompt_on(proc, prompt, timeout)
     finally:
         try:
@@ -255,6 +379,37 @@ def _rpc_prompt(prompt: str, cfg: dict, timeout: float) -> str:
 def _sock_path() -> str:
     from state import runtime_dir
     return os.path.join(runtime_dir(), "ai.sock")
+
+
+def restart_daemon() -> None:
+    """Kill the running ai-daemon so the next intent request respawns it with
+    the current (possibly changed) ai.model / ai.thinking. Best-effort: if no
+    daemon is running there is nothing to do. Used by `config set ai.*`."""
+    import signal
+    for pid in _daemon_pids():
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+
+def _daemon_pids() -> list[int]:
+    """Return PIDs of running `ai-daemon` processes (matched by cmdline so we
+    never kill an unrelated pi/omarchy process)."""
+    pids: list[int] = []
+    import glob
+    for path in glob.glob("/proc/[0-9]*/cmdline"):
+        try:
+            with open(path, "rb") as fh:
+                raw = fh.read().decode("utf-8", "replace")
+        except OSError:
+            continue
+        if "ai-daemon" in raw and "omarchy-voice-control" in raw:
+            try:
+                pids.append(int(path.split("/")[2]))
+            except ValueError:
+                continue
+    return pids
 
 
 def _spawn_daemon() -> None:
@@ -362,7 +517,7 @@ def daemon_main(cfg: dict) -> int:
             if proc is None or proc.poll() is not None:
                 try:
                     proc = _spawn_pi(cfg)
-                    _send(proc, {"type": "set_thinking_level", "id": "th", "level": "off"})
+                    _send(proc, {"type": "set_thinking_level", "id": "th", "level": _thinking_level(cfg)})
                 except AIError:
                     time.sleep(2)
                     continue
