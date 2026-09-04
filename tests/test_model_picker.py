@@ -298,6 +298,45 @@ class TestChatFallback(unittest.TestCase):
         pop.assert_called_once()
         self.assertEqual(pop.call_args[0][0][0], "chromium")
 
+    def test_chat_tool_substitutes_query(self):
+        # The {query} placeholder is replaced with the URL-encoded user question
+        # (original transcript, falling back to chat_defer) so the AI tool opens
+        # a chat about the topic instead of a blank page.
+        import cli as cli_mod
+        import state as state_mod
+        from urllib.parse import quote
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": tmp}, clear=False):
+                st = state_mod.load_state()
+                st["phase"] = "chat_defer"
+                st["transcript"] = "什么是量子计算"
+                st["chat_defer"] = "深入研究这个主题"
+                state_mod.write_state(st)
+                cfg = {"chat": {"tool": "myai --url=\"https://example.ai/?q={query}\""}}
+                with mock.patch("cli._load", return_value=(cfg, {})), \
+                     mock.patch("cli.subprocess.Popen") as pop:
+                    rc = cli_mod.cmd_chat_tool()
+                self.assertEqual(rc, 0)
+                args = pop.call_args[0][0]
+                self.assertEqual(args[0], "myai")
+                self.assertIn(quote("什么是量子计算", safe=""), args[1])
+                # placeholder must be gone from the launched command
+                self.assertNotIn("{query}", args[1])
+
+    def test_chat_tool_no_placeholder_launches_unmodified(self):
+        # A legacy chat.tool without {query} still launches unchanged.
+        import cli as cli_mod
+        import state as state_mod
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": tmp}, clear=False):
+                state_mod.write_state({**state_mod.load_state(), "phase": "chat_defer"})
+                cfg = {"chat": {"tool": "somelink --url=https://example.ai"}}
+                with mock.patch("cli._load", return_value=(cfg, {})), \
+                     mock.patch("cli.subprocess.Popen") as pop:
+                    rc = cli_mod.cmd_chat_tool()
+                self.assertEqual(rc, 0)
+                self.assertEqual(pop.call_args[0][0][1], "--url=https://example.ai")
+
     def test_chat_analyze_kinds(self):
         import intent.ai as ai
         self.assertEqual(ai.chat_analyze("  ", {"ai": {"enabled": True}}), None)  # blank

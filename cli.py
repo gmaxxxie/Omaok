@@ -422,14 +422,34 @@ def cmd_cancel_action() -> int:
     return 0
 
 
+def _chat_query() -> str:
+    """URL-encode the question to hand off to the AI tool: the user's original
+    transcript (the actual question), falling back to the chat_defer handoff
+    text. Used to pre-fill the tool (e.g. ChatGPT's ?q= deep link) so it opens
+    a chat about the topic instead of a blank page."""
+    st = load_state()
+    text = (st.get("transcript") or "").strip() or (st.get("chat_defer") or "").strip()
+    if not text:
+        return ""
+    try:
+        from urllib.parse import quote
+        return quote(text, safe="")
+    except Exception:
+        return text
+
+
 def cmd_chat_tool() -> int:
     """Launch the configured AI tool for complex-topic discussion (chat.tool).
-    Never runs voice/AI-provided commands — only the user-configured command."""
+    Any `{query}` placeholder in the command is replaced with the URL-encoded
+    user question (original transcript, falling back to the chat_defer text) so
+    the tool opens a chat about the topic. Never runs voice/AI-provided
+    commands — only the user-configured command."""
     cfg, _aliases = _load()
     chat = cfg.get("chat") or {}
-    command = chat.get("tool") or "chromium --app=https://chatgpt.com"
+    command = chat.get("tool") or "chromium --app=\"https://chatgpt.com/?q={query}\""
     if not command or not command.strip():
         return 0
+    command = command.replace("{query}", _chat_query())
     import shlex
     try:
         argv = shlex.split(command)

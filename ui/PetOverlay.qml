@@ -252,7 +252,8 @@ Item {
   function bubbleText() {
     if (root.errorPhase) return "⚠ " + (root.error || "Something went wrong")
     if (root.chatReply) return root.chatReplyText || "—"
-    if (root.chatDefer) return root.chatDeferText + "\n\u2192 open AI tool?"
+    if (root.chatDefer) return root.chatDeferText + "\nOpen AI tool?"
+    // (chat_defer shows an Open/Cancel button row below, see actionRow)
     if (root.phase === "recording") return "Listening…\ntap again to finish · right-click to cancel"
     if (root.phase === "transcribing") return "Thinking… (right-click to cancel)"
     if (root.phase === "executing") return "Working… (right-click to cancel)"
@@ -355,22 +356,28 @@ Item {
 
           Row {
             id: actionRow
-            visible: root.awaiting
+            // Confirm/cancel row: awaiting_confirm -> ✓ run action / ✗ cancel;
+            // chat_defer -> ✓ open the AI tool / ✗ dismiss.
+            visible: root.awaiting || root.chatDefer
             spacing: Style.space(8)
             height: Style.space(30)
 
             Button {
               width: (root.bubbleTextW - Style.space(8)) * 0.5
               height: Style.space(30)
-              iconText: "\uF00C"          // ✓
+              iconText: root.chatDefer ? "\uF08E" : "\uF00C"   // chat: ↗ open | awaiting: ✓
+              text: root.chatDefer ? "Open" : ""
               foreground: "#f2f2f2"
               accent: Color.accent
-              onClicked: root.cmdCli(["confirm"])
+              onClicked: {
+                if (root.chatDefer) root.cmdCli(["chat-tool"])   // jump to the AI tool
+                else root.cmdCli(["confirm"])
+              }
             }
             Button {
               width: (root.bubbleTextW - Style.space(8)) * 0.5
               height: Style.space(30)
-              iconText: "\uF00D"          // ✗
+              iconText: "\uF00D"                                  // ✗
               foreground: "#f2f2f2"
               accent: Color.accent
               onClicked: root.cmdCli(["cancel-action"])

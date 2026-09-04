@@ -445,16 +445,28 @@ Panel {
               textFormat: Text.PlainText
             }
           }
-          Button {
+          Row {
             visible: root.chatDefer
-            focusable: true
-            text: "Open AI tool"
-            iconText: "\uF08E"
-            foreground: root.fg
-            accent: Color.accent
-            height: Style.space(34)
             width: parent.width
-            onClicked: root.cmd("chat-tool")
+            spacing: Style.space(8)
+            Button {
+              focusable: true
+              text: "Open AI tool"
+              iconText: "\uF08E"
+              foreground: root.fg
+              accent: Color.accent
+              height: Style.space(34)
+              width: (parent.width - Style.space(8)) * 0.6
+              onClicked: root.cmd("chat-tool")
+            }
+            Button {
+              focusable: true
+              text: "Cancel"
+              foreground: root.fg
+              height: Style.space(34)
+              width: (parent.width - Style.space(8)) * 0.4
+              onClicked: root.cancelPending()
+            }
           }
 
           // ---- Action / target ----

@@ -35,7 +35,7 @@ DEFAULT_CONFIG = {
     },
     "chat": {
         "enabled": True,           # non-command transcripts get a short reply / AI-tool handoff
-        "tool": "chromium --app=https://chatgpt.com",  # complex topics -> open this AI tool
+        "tool": "chromium --app=\"https://chatgpt.com/?q={query}\"",  # complex topics -> open the AI tool, pre-filled with the user's question ({query})
         "tool_label": "ChatGPT",
     },
     "recorder": {
