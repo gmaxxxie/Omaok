@@ -101,30 +101,41 @@ def _process_transcript(st: dict, cfg: dict, aliases: dict) -> None:
         write_state(st)
         return
 
-    # 1) Operation memory: repeat/near-identical commands replay the known draft
-    #    (skip parse + AI; still re-resolved + re-validated below).
+    # ---- Layered decision funnel (priority HIGH -> LOW) ----
+    # L1 rules -> L2 common commands (operation memory) -> L3 AI-intent commands
+    #   -> L4 conversation -> L5 AI-tool handoff (defer).
+    # Computer-control commands are handled by the fast local layers first
+    # (rules and memory are ~ms, zero network); only novel commands fall through
+    # to the AI intent layer; everything else is chat, and only complex topics
+    # defer to the AI tool as the last resort.
     draft = None
     source = "rule"
     action = None
-    entry = memory_mod.lookup(text)
-    if entry:
-        cached = dict(entry.get("draft") or {})
-        cached["confidence"] = float(cached.get("confidence", 0.8))
-        a = resolver.resolve_action(dict(cached), cfg, aliases)
-        if a is not None and a["type"] == cached.get("type"):
-            action = a
-            draft = cached
-            source = str(cached.get("source") or "rule")
-            audit("memory hit: %r -> %s" % (text, action["type"]))
 
-    # 2) Deterministic rules.
+    # L1) Deterministic rules — fastest, no network.
     if action is None:
         draft = intent_rules.parse(text)
         if draft is not None:
             source = "rule"
             action = resolver.resolve_action(dict(draft), cfg, aliases)
 
-    # 3) Local AI intent layer.
+    # L2) Common commands: operation-memory replay of a previously recognized
+    #     (near-identical) phrase — skips the AI intent layer. The cached draft
+    #     is still re-resolved + re-validated (resolver + policy) so safety
+    #     stays current (blocklist/path changes take effect immediately).
+    if action is None:
+        entry = memory_mod.lookup(text)
+        if entry:
+            cached = dict(entry.get("draft") or {})
+            cached["confidence"] = float(cached.get("confidence", 0.8))
+            a = resolver.resolve_action(dict(cached), cfg, aliases)
+            if a is not None and a["type"] == cached.get("type"):
+                action = a
+                draft = cached
+                source = str(cached.get("source") or "rule")
+                audit("memory hit: %r -> %s" % (text, action["type"]))
+
+    # L3) AI-intent commands: novel phrasing the rules don't cover.
     if action is None:
         ai_draft = intent_ai.analyze(text, cfg)
         if ai_draft is not None:
@@ -132,12 +143,11 @@ def _process_transcript(st: dict, cfg: dict, aliases: dict) -> None:
             draft = ai_draft
             action = resolver.resolve_action(dict(draft), cfg, aliases)
 
-    # 4) Not a command: chat fallback. If the user said something that is not
-    #    a desktop command (rules + AI intent both empty), ask the model whether
-    #    it is a simple question we can answer inline (chat_reply) or a complex
-    #    topic worth handing to a full AI tool (chat_defer). Single-turn only.
-    #    Skip when the transcript is too short to be meaningful (pure noise /
-    #    punctuation from a poor capture) — don't burn a model call on it.
+    # L4/L5) Not a command: chat fallback. L4 answers inline (chat_reply); L5
+    #        defers complex/open topics to the AI tool (chat_defer) — the LAST
+    #        resort. Skip when the transcript is too short to be meaningful
+    #        (pure noise / punctuation from a poor capture) — don't burn a
+    #        model call on it.
     _chattext = intent_rules.normalize(text)
     if action is None and len(_chattext) >= 2 and (cfg.get("chat") or {}).get("enabled", True):
         # Character memory: who / background / ability questions are answered
