@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Effects
 import Quickshell
+import Quickshell.Hyprland
 import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
@@ -66,6 +67,19 @@ Item {
   readonly property int bubbleTextW:
     root.awaiting || root.showResult || root.errorPhase || root.chatPhase ? 212 : 160
   readonly property int petSize: Math.max(48, Math.round(100 * root.petScale))
+
+  // ---- screensaver suppression ----
+  // Omarchy's "screensaver" is a fullscreen window (class org.omarchy.screensaver,
+  // ttfx running in a terminal), NOT a layer-lock surface — so this Overlay-layer
+  // pet would otherwise float on top of it. Hide the pet whenever such a window is
+  // mapped (and the bar/notifications stay up, which is Omarchy's own behavior).
+  // The lock screen is a real ext-session-lock, which the compositor already
+  // renders above every surface, so no extra handling is needed for that.
+  readonly property string screensaverClass: "org.omarchy.screensaver"
+  property var screensaverAddresses: ({})
+  property int screensaverCount: 0
+  property bool screensaverWasActive: false
+  readonly property bool screensaverActive: root.screensaverCount > 0
 
   // phase (display) -> sprite file under ui/pet/. Remap here or rename the PNGs.
   property var sprites: ({
@@ -160,6 +174,72 @@ Item {
     onFileChanged: reload()
   }
 
+  // ---- screensaver window tracking ----
+
+  function eventParts(event, count) {
+    try {
+      if (event && event.parse) return event.parse(count)
+    } catch (e) {}
+    return String(event && event.data ? event.data : "").split(",")
+  }
+
+  function screensaverSetActive(addr, visible) {
+    // Normalize the address: Hyprland's socket2 events report it WITHOUT the
+    // "0x" prefix (e.g. 55ac70b5cfc0) while `hyprctl clients` reports it WITH
+    // it (0x55ac70b5cfc0). The probe feeds us the latter, events the former;
+    // strip the prefix so both become the same key and closewindow can clear
+    // an entry that openwindow/probe created.
+    addr = String(addr || "").replace(/^0x/i, "")
+    if (!addr) return
+    if (visible) root.screensaverAddresses[addr] = true
+    else delete root.screensaverAddresses[addr]
+    var count = 0
+    for (var k in root.screensaverAddresses) if (root.screensaverAddresses[k]) count++
+    var active = count > 0
+    // Never keep the mic hot invisibly: the moment the screensaver covers the
+    // pet, abort any in-flight recording/processing (no-op otherwise). This
+    // mirrors the popover's "never record invisibly" invariant.
+    if (active && !root.screensaverWasActive && (root.recording || root.working)) {
+      root.cmdCli(["record", "cancel"])
+    }
+    root.screensaverWasActive = active
+    root.screensaverCount = count
+  }
+
+  function handleHyprlandEvent(event) {
+    var name = String(event && event.name ? event.name : "")
+    if (name === "openwindow") {
+      var open = root.eventParts(event, 4)
+      if (String(open[2] || "") === root.screensaverClass) root.screensaverSetActive(open[0], true)
+    } else if (name === "closewindow") {
+      var close = root.eventParts(event, 1)
+      if (root.screensaverAddresses[String(close[0] || "")]) root.screensaverSetActive(close[0], false)
+    }
+  }
+
+  Connections {
+    target: Hyprland
+    function onRawEvent(event) { root.handleHyprlandEvent(event) }
+  }
+
+  // One-shot at load: catch a screensaver already mapped before this plugin
+  // started (e.g. the shell restarted while the idle screensaver was up).
+  // Emits one org.omarchy.screensaver address per line.
+  Process {
+    id: screensaverProbe
+    command: ["bash", "-lc",
+      "hyprctl -j clients 2>/dev/null | jq -r '.[] | select(.class == \"org.omarchy.screensaver\") | .address'"]
+    running: false
+    stdout: SplitParser {
+      onRead: function(line) {
+        var addr = String(line).trim()
+        if (addr) root.screensaverSetActive(addr, true)
+      }
+    }
+  }
+
+  Component.onCompleted: screensaverProbe.running = true
+
   // ---- sprite / bubble content ----
 
   function spriteUrl() {
@@ -216,7 +296,7 @@ Item {
 
   PanelWindow {
     id: panel
-    visible: root.petVisible
+    visible: root.petVisible && !root.screensaverActive
     color: "transparent"
     anchors { left: true; top: true }
     // Keep the pet fixed: the window's TOP edge moves up as the bubble grows
