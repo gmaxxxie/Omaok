@@ -206,7 +206,13 @@ Item {
     visible: root.petVisible
     color: "transparent"
     anchors { left: true; top: true }
-    margins { left: root.petX; top: root.petY }
+    // Keep the pet fixed: the window's TOP edge moves up as the bubble grows
+    // (margins.top = petY - bubbleH - gap), so the window's bottom edge stays
+    // at petY + petSize — the pet never gets pushed down when the bubble grows.
+    margins {
+      left: root.petX
+      top: root.petY - (bubble.visible ? bubble.height + Style.space(6) : 0)
+    }
     WlrLayershell.namespace: "omaok-voice-pet"
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
