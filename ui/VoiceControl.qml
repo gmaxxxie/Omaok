@@ -186,7 +186,7 @@ Panel {
       anchors.fill: parent
       // While a model-picker popup or its search field owns the keys, suspend
       // the panel catcher so typing/j-k inside the picker isn't double-driven.
-      blocked: (sttModelPicker.popupOpen || aiModelPicker.popupOpen || aiThinkingPicker.popupOpen)
+      blocked: (sttModelPicker.popupOpen || aiBackendPicker.popupOpen || aiModelPicker.popupOpen || aiThinkingPicker.popupOpen)
       onCloseRequested: root.close()
       onActivateRequested: root.activate()
       onTabRequested: function (dir) { root.moveFocus(dir) }
@@ -258,10 +258,30 @@ Panel {
             onChanged: function (v) { root.cmd("config set stt.model " + v) }
           }
 
-          // ---- AI intent model + thinking ----
+          // ---- AI intent framework + model + thinking ----
+          Dropdown {
+            id: aiBackendPicker
+            label: "Intent framework"
+            width: parent.width
+            value: root.provider && root.provider.ai ? (root.provider.ai.backend || "pi-rpc") : "pi-rpc"
+            options: [
+              { value: "pi-rpc", label: "pi-rpc (pi)" },
+              { value: "opencode", label: "opencode (sst)" },
+              { value: "codex", label: "codex (OpenAI)" }
+            ]
+            foreground: root.fg
+            accent: Color.accent
+            fontFamily: root.barFont
+            onChanged: function (v) {
+              // Switch framework first (its model list is per-backend); keep the
+              // previous model if it exists there, else fall back to default.
+              root.cmd("config set ai.backend " + v)
+              root.cmd("config set ai.model default")
+            }
+          }
           SearchableDropdown {
             id: aiModelPicker
-            label: "Intent model (pi)"
+            label: "Intent model"
             width: parent.width
             placeholderText: "Search models…"
             value: root.provider && root.provider.ai ? (root.provider.ai.model || "default") : ""
@@ -563,6 +583,7 @@ Panel {
   function moveFocus(dir) {
     var list = []
     if (sttModelPicker.enabled) list.push(sttModelPicker)
+    if (aiBackendPicker.enabled) list.push(aiBackendPicker)
     if (aiModelPicker.enabled) list.push(aiModelPicker)
     if (aiThinkingPicker.enabled) list.push(aiThinkingPicker)
     if (micBtn.enabled) list.push(micBtn)

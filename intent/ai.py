@@ -157,26 +157,121 @@ def _to_draft(obj: dict) -> dict | None:
     }
 
 
-def _thinking_level(cfg: dict) -> str:
-    """Resolve the configured pi thinking level (default 'off' for speed).
-    The QML intent picker sets ai.thinking; anything unrecognised falls back
-    to 'off' so a bad value can never slow the intent layer."""
-    level = (cfg.get("ai") or {}).get("thinking") or "off"
-    valid = {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
-    return level if level in valid else "off"
+# ---------------------------------------------------------------------------
+# Multi-backend intent dispatch: ai.backend is one of
+#   pi-rpc   — persistent warm pi daemon (default, lowest latency)
+#   opencode — `opencode run` one-shot (sst/opencode, structured JSON events)
+#   codex    — `codex exec` one-shot (OpenAI Codex CLI, --json event stream)
+# Each backend implements list_available_models() + a one-shot prompt that
+# returns the assistant's final text; analyze() extracts the strict JSON draft.
+# ---------------------------------------------------------------------------
+
+_BACKENDS = ("pi-rpc", "opencode", "codex")
+
+
+def _backend_of(cfg: dict) -> str:
+    """Resolve ai.backend, falling back to pi-rpc on anything unknown."""
+    backend = (cfg.get("ai") or {}).get("backend") or "pi-rpc"
+    return backend if backend in _BACKENDS else "pi-rpc"
+
+
+def _opencode_binary() -> str | None:
+    import shutil
+    return shutil.which("opencode")
+
+
+def _codex_binary() -> str | None:
+    import shutil
+    return shutil.which("codex")
+
+
+def _probe_opencode_models() -> list[dict]:
+    """Enumerate opencode models: `opencode models` prints provider/model lines.
+    Every model is available (no separate auth gate; opencode auth list is the
+    single source and we only run models the tool exposes)."""
+    models: list[dict] = []
+    try:
+        proc = subprocess.run(
+            [_opencode_binary(), "models"], capture_output=True, text=True, timeout=30,
+        )
+        if proc.returncode != 0:
+            return models
+        for line in (proc.stdout or "").splitlines():
+            line = line.strip()
+            if "/" not in line or line.startswith("#") or line.startswith("-"):
+                continue
+            provider, model = line.split("/", 1)
+            if not provider or not model:
+                continue
+            models.append({
+                "id": "%s/%s" % (provider, model),
+                "label": "%s · %s" % (provider, model),
+                "provider": provider,
+                "model": model,
+                "thinking": True,  # opencode supports --variant effort control
+                "images": False,
+                "ready": True,
+            })
+    except Exception:
+        pass
+    return models
+
+
+def _probe_codex_models() -> list[dict]:
+    """Enumerate codex models from ~/.codex/models_cache.json (the model
+    catalog codex itself fetches). Falls back to the configured model in
+    ~/.codex/config.toml so the picker always has at least the active model."""
+    models: list[dict] = []
+    for path in (
+        os.path.expanduser("~/.codex/models_cache.json"),
+        os.path.expanduser("~/.config/codex/models_cache.json"),
+    ):
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            for m in data.get("models") or []:
+                slug = m.get("slug") or m.get("id")
+                if not slug:
+                    continue
+                models.append({
+                    "id": slug,
+                    "label": slug,
+                    "provider": "codex",
+                    "model": slug,
+                    "thinking": bool(m.get("supports_reasoning", True)),
+                    "images": bool(m.get("supports_images", False)),
+                    "ready": True,
+                })
+            if models:
+                break
+        except Exception:
+            continue
+    if not models:
+        # Fallback: the model currently configured in ~/.codex/config.toml.
+        import re
+        try:
+            with open(os.path.expanduser("~/.codex/config.toml"), "r", encoding="utf-8") as fh:
+                txt = fh.read()
+            m = re.search(r"^model\s*=\s*[\"']([^\"']+)[\"']", txt, re.M)
+            if m:
+                slug = m.group(1).strip()
+                models.append({
+                    "id": slug, "label": slug, "provider": "codex",
+                    "model": slug, "thinking": True, "images": False, "ready": True,
+                })
+        except Exception:
+            pass
+    return models
 
 
 def list_available_models(cfg: dict, refresh: bool = False) -> list[dict]:
-    """Enumerate the intent models available on this machine: every pi model
-    whose provider is authenticated (ready). Returns a list of
-    {id, label, provider, model, thinking, images, ready}.
-
-    Cheap fast-path: `pi auth check --provider <p>` per provider (~0.3s each,
-    cached) then `pi --list-models` (~1s) filtered to ready providers. A stale
-    cache (10 min) avoids re-running the provider probes on every popover open.
-    """
-    import io  # noqa: F401  (unused; kept for clarity)
-    cache_path = os.path.join(settings.USER_CONFIG_DIR, "ai-models.json")
+    """Enumerate the intent models available for the configured backend.
+    Returns {id, label, provider, model, thinking, images, ready}[], cached
+    per-backend (10 min) so the popup never re-probes on every open."""
+    backend = _backend_of(cfg)
+    cache_path = os.path.join(
+        settings.USER_CONFIG_DIR, "ai-models-%s.json" % backend
+    )
     cache_ttl = float((cfg.get("ai") or {}).get("models_cache_secs", 600))
     if not refresh and os.path.exists(cache_path):
         try:
@@ -191,11 +286,16 @@ def list_available_models(cfg: dict, refresh: bool = False) -> list[dict]:
         except Exception:
             pass
 
-    models = _probe_pi_models()
+    if backend == "opencode":
+        models = _probe_opencode_models()
+    elif backend == "codex":
+        models = _probe_codex_models()
+    else:
+        models = _probe_pi_models()
     try:
         os.makedirs(settings.USER_CONFIG_DIR, exist_ok=True)
         with open(cache_path, "w", encoding="utf-8") as fh:
-            json.dump({"ts": time.time(), "models": models}, fh)
+            json.dump({"ts": time.time(), "models": models, "backend": backend}, fh)
     except Exception:
         pass
     return models
@@ -275,10 +375,21 @@ def _configured_providers() -> set:
     return out
 
 
-_PI_PROVIDERS = (
-    "deepseek", "opencode", "opencode-go", "xai",
-    "volcengine-agent-plan", "volcengine-plan",
-)
+def _thinking_level(cfg: dict) -> str:
+    """Resolve the configured intent thinking level (default 'off' for speed).
+    The QML intent picker sets ai.thinking; anything unrecognised falls back
+    to 'off' so a bad value can never slow the intent layer."""
+    level = (cfg.get("ai") or {}).get("thinking") or "off"
+    valid = {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
+    return level if level in valid else "off"
+    """Resolve the configured pi thinking level (default 'off' for speed).
+    The QML intent picker sets ai.thinking; anything unrecognised falls back
+    to 'off' so a bad value can never slow the intent layer."""
+    level = (cfg.get("ai") or {}).get("thinking") or "off"
+    valid = {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
+    return level if level in valid else "off"
+
+
 
 
 def _spawn_pi(cfg: dict):
@@ -587,14 +698,133 @@ def _parse(line: str) -> dict | None:
         return None
 
 
+def _opencode_prompt(transcript: str, cfg: dict, timeout: float) -> str:
+    """One-shot: `opencode run --format json` returns a JSON event stream;
+    the assistant's final answer is the last `text` event before step_finish."""
+    binary = _opencode_binary()
+    if not binary:
+        raise AIError("opencode binary not found on PATH")
+    ai = cfg.get("ai") or {}
+    cmd = [binary, "run", "--format", "json"]
+    model = ai.get("model")
+    if model and model not in ("default", "null", "none"):
+        cmd += ["--model", model]
+    effort = _thinking_level(cfg)
+    if effort != "off":
+        cmd += ["--variant", effort]
+    cmd.append(_build_prompt(transcript))
+    last_err = ""
+    for attempt in range(2):  # opencode is a remote API: retry once on error
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            raise AIError("opencode intent timed out after %ss" % timeout)
+        # --format json emits one JSON event per line; the final assistant text
+        # is in `text` events. Concatenate (usually exactly one) so JSON may span.
+        parts = []
+        remote_err = ""
+        for line in (proc.stdout or "").splitlines():
+            try:
+                ev = json.loads(line)
+            except Exception:
+                continue
+            if ev.get("type") == "text" and isinstance(ev.get("part"), dict):
+                parts.append(ev["part"].get("text") or "")
+            elif ev.get("type") == "error":
+                remote_err = str(ev.get("error") or "")[:200]
+        if parts:
+            return "\n".join(p for p in parts if p).strip()
+        if remote_err:
+            last_err = remote_err
+        elif proc.returncode != 0:
+            detail = (proc.stderr or "").strip().splitlines()
+            last_err = detail[-1][:300] if detail else str(proc.returncode)
+        else:
+            last_err = "no assistant text in output"
+    raise AIError("opencode intent failed: %s" % last_err)
+
+
+def _codex_prompt(transcript: str, cfg: dict, timeout: float) -> str:
+    """One-shot: `codex exec --json` emits a JSONL event stream; the final
+    answer is the `item.completed` agent_message text."""
+    binary = _codex_binary()
+    if not binary:
+        raise AIError("codex binary not found on PATH")
+    ai = cfg.get("ai") or {}
+    cmd = [binary, "exec", "--json", "--skip-git-repo-check"]
+    model = ai.get("model")
+    if model and model not in ("default", "null", "none"):
+        cmd += ["-m", model]
+    cmd.append(_build_prompt(transcript))
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        raise AIError("codex intent timed out after %ss" % timeout)
+    if proc.returncode != 0 and not (proc.stdout or ""):
+        detail = (proc.stderr or "").strip().splitlines()
+        raise AIError("codex intent failed: %s" % (detail[-1][:300] if detail else proc.returncode))
+    last_text = ""
+    for line in (proc.stdout or "").splitlines():
+        try:
+            ev = json.loads(line)
+        except Exception:
+            continue
+        if ev.get("type") == "item.completed":
+            item = ev.get("item") or {}
+            if item.get("type") == "agent_message" and item.get("text"):
+                last_text = item["text"]
+    if not last_text:
+        raise AIError("codex intent: no assistant text in output")
+    return last_text
+
+
+def _one_shot_draft(transcript: str, cfg: dict) -> dict | None:
+    """Run the configured non-pi backend (opencode/codex) and return a draft.
+    On failure, falls back to the pi-rpc backend (daemon if warm, else one-shot)
+    so a remote-API hiccup can never take the intent layer down."""
+    backend = _backend_of(cfg)
+    timeout = float((cfg.get("ai") or {}).get("timeout_secs", 60))
+    text = None
+    try:
+        if backend == "opencode":
+            text = _opencode_prompt(transcript, cfg, timeout)
+        elif backend == "codex":
+            text = _codex_prompt(transcript, cfg, timeout)
+    except AIError:
+        text = None  # fall through to pi fallback below
+    if text:
+        obj = _extract_json(text)
+        if obj is not None:
+            draft = _to_draft(obj)
+            if draft is not None:
+                return draft
+    # Fallback: pi-rpc (warm daemon preferred).
+    try:
+        text = _rpc_prompt(_build_prompt(transcript), cfg, timeout)
+    except AIError:
+        return None
+    obj = _extract_json(text)
+    if obj is None:
+        return None
+    return _to_draft(obj)
+
+
 def analyze(transcript: str, cfg: dict) -> dict | None:
     """Return an AI Action draft, or None if the model produced nothing valid.
-    Prefers the persistent ai-daemon (warm pi), falls back to a one-shot RPC."""
+    Dispatches by ai.backend: pi-rpc prefers the persistent warm daemon and
+    falls back to a one-shot RPC; opencode/codex run a one-shot subprocess."""
     if not transcript or len(transcript.strip()) < 2:
         return None
     ai = cfg.get("ai") or {}
     if not ai.get("enabled", True):
         return None
+    backend = _backend_of(cfg)
+    if backend != "pi-rpc":
+        return _one_shot_draft(transcript, cfg)
     draft = _daemon_request(transcript, cfg)
     if draft is not None:
         return draft

@@ -104,6 +104,79 @@ class TestAiModelEnumeration(unittest.TestCase):
         self.assertEqual(intent_ai._thinking_level({"ai": {"thinking": "bogus"}}), "off")
         self.assertEqual(intent_ai._thinking_level({}), "off")
 
+    def test_backend_of_falls_back(self):
+        self.assertEqual(intent_ai._backend_of({"ai": {"backend": "pi-rpc"}}), "pi-rpc")
+        self.assertEqual(intent_ai._backend_of({"ai": {"backend": "opencode"}}), "opencode")
+        self.assertEqual(intent_ai._backend_of({"ai": {"backend": "codex"}}), "codex")
+        self.assertEqual(intent_ai._backend_of({"ai": {"backend": "bogus"}}), "pi-rpc")
+        self.assertEqual(intent_ai._backend_of({}), "pi-rpc")
+
+    @mock.patch("intent.ai._opencode_binary", return_value="/usr/bin/opencode")
+    @mock.patch("intent.ai.subprocess.run")
+    def test_probe_opencode_models(self, run, _bin):
+        run.return_value = mock.Mock(
+            returncode=0,
+            stdout="opencode-go/deepseek-v4-flash\nopencode/big-pickle\n# comment line\n",
+        )
+        out = intent_ai._probe_opencode_models()
+        ids = {m["id"] for m in out}
+        self.assertIn("opencode-go/deepseek-v4-flash", ids)
+        self.assertIn("opencode/big-pickle", ids)
+        self.assertEqual(len(out), 2)
+
+    @mock.patch("intent.ai.os.path.expanduser", side_effect=lambda p: p)
+    @mock.patch("builtins.open")
+    def test_probe_codex_models_from_cache(self, open_mock, _exp):
+        import io
+        data = {"models": [
+            {"slug": "gpt-5.4", "supports_reasoning": True},
+            {"slug": "gpt-5.4-mini", "supports_reasoning": False},
+        ]}
+        handle = mock.Mock()
+        handle.__enter__ = mock.Mock(return_value=io.StringIO(json.dumps(data)))
+        handle.__exit__ = mock.Mock(return_value=False)
+        open_mock.return_value = handle
+        out = intent_ai._probe_codex_models()
+        ids = {m["id"] for m in out}
+        self.assertIn("gpt-5.4", ids)
+        self.assertIn("gpt-5.4-mini", ids)
+
+    @mock.patch("intent.ai._opencode_binary", return_value="/usr/bin/opencode")
+    @mock.patch("intent.ai.subprocess.run")
+    def test_opencode_prompt_parses_text_event(self, run, _bin):
+        import json as _json
+        def ev(**kw): return _json.dumps(kw)
+        run.return_value = mock.Mock(
+            returncode=0,
+            stdout=ev(type="step_start", part={"type": "step-start"}) + "\n"
+                   + ev(type="text", part={"type": "text", "text": _json.dumps({"type": "open_app", "target": {"name": "Firefox"}, "confidence": 0.95})}) + "\n"
+                   + ev(type="step_finish", part={"type": "step-finish"}) + "\n",
+            stderr="",
+        )
+        text = intent_ai._opencode_prompt("打开 Firefox", {"ai": {}}, 30)
+        self.assertIn("open_app", text)
+        run.assert_called_once()
+
+    @mock.patch("intent.ai._codex_binary", return_value="/usr/bin/codex")
+    @mock.patch("intent.ai.subprocess.run")
+    def test_codex_prompt_parses_agent_message(self, run, _bin):
+        import json as _json
+        run.return_value = mock.Mock(
+            returncode=0,
+            stdout=_json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": _json.dumps({"type": "switch_workspace", "target": {"id": 2}})}}) + "\n",
+            stderr="",
+        )
+        text = intent_ai._codex_prompt("切到工作区2", {"ai": {}}, 30)
+        self.assertIn("switch_workspace", text)
+
+    @mock.patch("intent.ai._backend_of", return_value="opencode")
+    @mock.patch("intent.ai._opencode_prompt", return_value='{"type":"open_app","target":{"name":"Firefox"},"confidence":0.9}')
+    def test_analyze_dispatches_to_opencode(self, prompt, _be):
+        d = intent_ai.analyze("打开 Firefox", {"ai": {"enabled": True}})
+        self.assertIsNotNone(d)
+        self.assertEqual(d["type"], "open_app")
+        prompt.assert_called_once()
+
 
 class TestConfigPersistence(unittest.TestCase):
     def setUp(self):

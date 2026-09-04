@@ -470,8 +470,8 @@ def cmd_config(argv: list) -> int:
     elif path == "stt.language":
         patch = {"stt": {"language": value}}
     elif path == "ai.backend":
-        if value != "pi-rpc":
-            return _err("config set ai.backend: only 'pi-rpc' is supported")
+        if value not in intent_ai._BACKENDS:
+            return _err("config set ai.backend: unsupported %r (allowed: %s)" % (value, ", ".join(intent_ai._BACKENDS)))
         patch = {"ai": {"backend": value}}
     else:  # ai.model
         if value and value not in {"null", "none", "default"}:
@@ -483,7 +483,10 @@ def cmd_config(argv: list) -> int:
     settings.save_user_config(patch)
     audit("config set %s = %s" % (path, value))
     if path.startswith("ai.") and path != "ai.enabled":
-        intent_ai.restart_daemon()  # warm pi must pick up the new model/thinking
+        # pi-rpc holds a warm process that must respawn on model/thinking
+        # change; opencode/codex are one-shot so nothing to restart.
+        if intent_ai._backend_of(settings.load_config()) == "pi-rpc":
+            intent_ai.restart_daemon()
     cmd_refresh_provider()
     return 0
 
