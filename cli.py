@@ -40,6 +40,7 @@ if _ROOT not in sys.path:
 
 from config import blocklist as blocklist_mod  # noqa: E402
 from config import catalog as catalog_mod  # noqa: E402
+from config import character as character_mod  # noqa: E402
 from config import pet as pet_mod  # noqa: E402
 from config import memory as memory_mod  # noqa: E402
 from config import settings  # noqa: E402
@@ -139,6 +140,17 @@ def _process_transcript(st: dict, cfg: dict, aliases: dict) -> None:
     #    punctuation from a poor capture) — don't burn a model call on it.
     _chattext = intent_rules.normalize(text)
     if action is None and len(_chattext) >= 2 and (cfg.get("chat") or {}).get("enabled", True):
+        # Character memory: who / background / ability questions are answered
+        # instantly and offline from omaok's persona (no model call).
+        persona_answer = character_mod.match(text)
+        if persona_answer:
+            st["phase"] = "chat_reply"
+            st["chat_reply"] = persona_answer
+            st["chat_defer"] = ""
+            st["error"] = ""
+            write_state(st)
+            audit("character reply: %r" % persona_answer)
+            return
         chat = intent_ai.chat_analyze(text, cfg)
         if chat and chat.get("kind") == "answer" and chat.get("reply"):
             st["phase"] = "chat_reply"

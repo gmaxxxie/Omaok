@@ -120,6 +120,41 @@ class TestStateMachine(unittest.TestCase):
         self.assertIn("understand", st["error"])
         self.assertIsNone(st["action"])
 
+    def test_character_memory_answers_identity_offline(self):
+        # "你是谁 / 你的背景" must be answered from omaok's persona WITHOUT a
+        # model call (chat_analyze should never run for these).
+        with mock.patch.object(cli_mod.intent_ai, "chat_analyze") as ca:
+            self._set_transcript("你是谁")
+            cli_mod.cmd_record_start()
+            cli_mod.cmd_record_stop()
+            ca.assert_not_called()
+        st = state_mod.load_state()
+        self.assertEqual(st["phase"], "chat_reply")
+        self.assertIn("omaok", st["chat_reply"])
+        self.assertIsNone(st["action"])
+
+    def test_character_memory_background_question(self):
+        self._set_transcript("你的背景是什么")
+        cli_mod.cmd_record_start()
+        cli_mod.cmd_record_stop()
+        st = state_mod.load_state()
+        self.assertEqual(st["phase"], "chat_reply")
+        self.assertIn("Omarchy", st["chat_reply"])
+        self.assertIn("右下角", st["chat_reply"])
+
+    def test_general_chat_still_uses_model(self):
+        # Non-identity questions must NOT be short-circuited: the model still
+        # classifies them (answer/defer/none).
+        with mock.patch.object(cli_mod.intent_ai, "chat_analyze",
+                               return_value={"kind": "answer", "reply": "巴黎是法国首都"}) as ca:
+            self._set_transcript("法国的首都")
+            cli_mod.cmd_record_start()
+            cli_mod.cmd_record_stop()
+            ca.assert_called_once()
+        st = state_mod.load_state()
+        self.assertEqual(st["phase"], "chat_reply")
+        self.assertEqual(st["chat_reply"], "巴黎是法国首都")
+
     def test_record_cancel_discards(self):
         cli_mod.cmd_record_start()
         cli_mod.cmd_record_cancel()

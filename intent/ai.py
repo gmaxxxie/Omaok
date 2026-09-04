@@ -24,6 +24,7 @@ import subprocess
 import time
 
 from config import settings
+from config import character as character_mod
 from intent import rules
 
 AIError = RuntimeError
@@ -851,7 +852,7 @@ _CHAT_BACKENDS = _BACKENDS
 
 
 def _chat_prompt(transcript: str) -> str:
-    return f"""You are a brief conversational assistant inside a desktop voice-control app.
+    return f"""{character_mod.blurb()}
 The user said something that is NOT a computer command. Decide how to handle it.
 
 Output ONLY a JSON object, no markdown, no explanation:

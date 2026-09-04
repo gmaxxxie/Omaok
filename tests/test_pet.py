@@ -112,3 +112,41 @@ class TestPetCli(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCharacterMemory(unittest.TestCase):
+    """omaok's persona: identity/background questions answered from character memory."""
+
+    def setUp(self):
+        from config import character as ch
+        self.ch = ch
+
+    def test_who_answers_name_and_role(self):
+        zh = self.ch.match("你是谁")
+        self.assertIsNotNone(zh)
+        self.assertIn("omaok", zh)
+        self.assertIn("本地语音管家", zh)
+        en = self.ch.match("who are you")
+        self.assertIsNotNone(en)
+        self.assertIn("omaok", en)
+
+    def test_name_mention_introduces(self):
+        self.assertIn("omaok", self.ch.match("小飞马"))
+        self.assertIn("omaok", self.ch.match("omaok"))
+
+    def test_background_answers_origin_and_home(self):
+        ans = self.ch.match("你的背景是什么")
+        self.assertIsNotNone(ans)
+        self.assertIn("Omarchy", ans)
+        self.assertIn("右下角", ans)
+
+    def test_ability_answers_capabilities(self):
+        self.assertIn("Voxtype", self.ch.match("你会什么"))
+
+    def test_personality_answers(self):
+        self.assertIn("傲娇", self.ch.match("你的性格怎么样"))
+
+    def test_non_persona_returns_none(self):
+        self.assertIsNone(self.ch.match("帮我打开浏览器"))
+        self.assertIsNone(self.ch.match("今天天气怎么样"))
+        self.assertIsNone(self.ch.match(""))
