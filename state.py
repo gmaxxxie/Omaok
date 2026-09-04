@@ -46,13 +46,15 @@ def audit_path() -> str:
 
 DEFAULT_STATE = {
     "schema": 1,
-    "phase": "idle",  # idle | recording | transcribing | awaiting_confirm | executing | result
+    "phase": "idle",  # idle | recording | transcribing | awaiting_confirm | executing | result | chat_reply | chat_defer
     "transcript": "",
     "action": None,
     "target_desc": "",
     "error": "",
     "result": None,
     "provider": None,
+    "chat_reply": "",    # short answer shown in the pet bubble (phase chat_reply)
+    "chat_defer": "",    # complex-topic handoff text (phase chat_defer)
     "updated_at": "",
 }
 

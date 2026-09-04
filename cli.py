@@ -9,6 +9,7 @@ Subcommands:
                          on its own (max_seconds cap / crash) without a stop
   confirm                Execute the pending confirmed Action
   cancel-action          Clear the pending Action
+  chat-tool              Launch the configured AI tool (chat.tool) for discussion
   refresh-provider       Re-probe Voxtype status into state.json
   config get [path]      Print config (or one dotted path)
   config set <path> <v>  Persist a setting (stt.*, ai.*) to user config
@@ -83,6 +84,8 @@ def _process_transcript(st: dict, cfg: dict, aliases: dict) -> None:
         st2["phase"] = "idle"
         st2["error"] = str(exc)
         st2["transcript"] = ""
+        st2["chat_reply"] = ""
+        st2["chat_defer"] = ""
         write_state(st2)
         audit("transcribe failed: %s" % exc)
         return
@@ -92,6 +95,8 @@ def _process_transcript(st: dict, cfg: dict, aliases: dict) -> None:
     if not text:
         st["phase"] = "idle"
         st["error"] = "No speech recognized"
+        st["chat_reply"] = ""
+        st["chat_defer"] = ""
         write_state(st)
         return
 
@@ -125,9 +130,38 @@ def _process_transcript(st: dict, cfg: dict, aliases: dict) -> None:
             source = "future_llm"
             draft = ai_draft
             action = resolver.resolve_action(dict(draft), cfg, aliases)
+
+    # 4) Not a command: chat fallback. If the user said something that is not
+    #    a desktop command (rules + AI intent both empty), ask the model whether
+    #    it is a simple question we can answer inline (chat_reply) or a complex
+    #    topic worth handing to a full AI tool (chat_defer). Single-turn only.
+    #    Skip when the transcript is too short to be meaningful (pure noise /
+    #    punctuation from a poor capture) — don't burn a model call on it.
+    _chattext = intent_rules.normalize(text)
+    if action is None and len(_chattext) >= 2 and (cfg.get("chat") or {}).get("enabled", True):
+        chat = intent_ai.chat_analyze(text, cfg)
+        if chat and chat.get("kind") == "answer" and chat.get("reply"):
+            st["phase"] = "chat_reply"
+            st["chat_reply"] = chat["reply"]
+            st["chat_defer"] = ""
+            st["error"] = ""
+            write_state(st)
+            audit("chat reply: %r" % chat["reply"])
+            return
+        if chat and chat.get("kind") == "defer" and chat.get("reply"):
+            st["phase"] = "chat_defer"
+            st["chat_defer"] = chat["reply"]
+            st["chat_reply"] = ""
+            st["error"] = ""
+            write_state(st)
+            audit("chat defer: %r" % chat["reply"])
+            return
+
     if action is None:
         st["phase"] = "idle"
         st["error"] = "Could not understand the command"
+        st["chat_reply"] = ""
+        st["chat_defer"] = ""
         write_state(st)
         audit("parse failed (rules + AI + memory) for %r" % text)
         return
@@ -138,6 +172,8 @@ def _process_transcript(st: dict, cfg: dict, aliases: dict) -> None:
     if not verdict["allowed"]:
         st["phase"] = "idle"
         st["error"] = "Blocked by policy: %s" % verdict["reason"]
+        st["chat_reply"] = ""
+        st["chat_defer"] = ""
         write_state(st)
         audit("policy block: %s" % verdict["reason"])
         return
@@ -169,6 +205,8 @@ def _record_result(target_desc: str, ok: bool, message: str) -> None:
     st["target_desc"] = ""
     st["result"] = {"ok": bool(ok), "message": display}
     st["error"] = "" if ok else str(message)
+    st["chat_reply"] = ""
+    st["chat_defer"] = ""
     write_state(st)
     audit("result %s: %s" % ("ok" if ok else "fail", message))
 
@@ -193,6 +231,8 @@ def cmd_record_start() -> int:
     st["target_desc"] = ""
     st["error"] = ""
     st["result"] = None
+    st["chat_reply"] = ""
+    st["chat_defer"] = ""
     write_state(st)
     audit("record start")
     _spawn_record_watchdog(getattr(recorder, "pid", None))
@@ -231,6 +271,8 @@ def _finalize_recording(cfg: dict, aliases: dict) -> int:
     if duration < min_secs:
         st["phase"] = "idle"
         st["error"] = "Recording too short (%0.1fs) — please hold a moment" % duration
+        st["chat_reply"] = ""
+        st["chat_defer"] = ""
         write_state(st)
         return 0
 
@@ -339,6 +381,8 @@ def cmd_record_cancel() -> int:
     st["target_desc"] = ""
     st["error"] = ""
     st["result"] = None
+    st["chat_reply"] = ""
+    st["chat_defer"] = ""
     write_state(st)
     audit("record cancel (audio discarded)")
     return 0
@@ -370,8 +414,43 @@ def cmd_cancel_action() -> int:
     st["action"] = None
     st["target_desc"] = ""
     st["error"] = ""
+    st["result"] = None
+    st["chat_reply"] = ""
+    st["chat_defer"] = ""
     write_state(st)
     audit("action cancelled by user")
+    return 0
+
+
+def cmd_chat_tool() -> int:
+    """Launch the configured AI tool for complex-topic discussion (chat.tool).
+    Never runs voice/AI-provided commands — only the user-configured command."""
+    cfg, _aliases = _load()
+    chat = cfg.get("chat") or {}
+    command = chat.get("tool") or "chromium --app=https://chatgpt.com"
+    if not command or not command.strip():
+        return 0
+    import shlex
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return 1
+    if not argv:
+        return 1
+    try:
+        subprocess.Popen(
+            argv, start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except Exception as exc:
+        return 1
+    audit("chat tool launched: %s" % command)
+    # Clear the pending chat state.
+    st = load_state()
+    st["phase"] = "idle"
+    st["chat_reply"] = ""
+    st["chat_defer"] = ""
+    write_state(st)
     return 0
 
 
@@ -612,6 +691,8 @@ def main(argv=None) -> int:
         return cmd_confirm()
     if command == "cancel-action":
         return cmd_cancel_action()
+    if command == "chat-tool":
+        return cmd_chat_tool()
     if command == "refresh-provider":
         return cmd_refresh_provider()
     if command == "config":

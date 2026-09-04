@@ -37,6 +37,8 @@ Panel {
   property string error: ""
   property var result: null
   property var provider: null
+  property string chatReplyText: ""
+  property string chatDeferText: ""
   property int focusIndex: 0
 
   // --- desktop pet (小飞马) ---
@@ -46,6 +48,8 @@ Panel {
   readonly property bool awaiting: root.phase === "awaiting_confirm"
   readonly property bool working: root.phase === "transcribing" || root.phase === "executing"
   readonly property bool busy: root.working || root.recording
+  readonly property bool chatReply: root.phase === "chat_reply"
+  readonly property bool chatDefer: root.phase === "chat_defer"
 
   readonly property color fg: root.bar ? root.bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(root.fg, 1.55)
@@ -79,6 +83,8 @@ Panel {
     root.result = o.result || null
     root.provider = o.provider || null
     root.action = o.action || null
+    root.chatReplyText = root.scrub(o.chat_reply || "")
+    root.chatDeferText = root.scrub(o.chat_defer || "")
     root.buildModelOptions()
   }
 
@@ -138,11 +144,15 @@ Panel {
     if (root.awaiting) { root.cmd("confirm"); return }
     if (root.recording) { root.cmd("record stop"); return }
     if (root.working) { return }
+    if (root.chatReply) { root.cmd("cancel-action"); return }   // dismiss the answer
+    if (root.chatDefer) { root.cmd("chat-tool"); return }        // open the AI tool
     root.cmd("record start")
   }
 
   function cancelPending() {
     if (root.awaiting) root.cmd("cancel-action")
+    else if (root.chatReply) root.cmd("cancel-action")
+    else if (root.chatDefer) root.cmd("cancel-action")
     else if (root.working || root.recording) root.cmd("record cancel")
   }
 
@@ -357,6 +367,8 @@ Panel {
             text: root.recording ? "Stop listening"
                 : root.working ? "Cancel"
                 : root.awaiting ? "Listening done"
+                : root.chatReply ? "Got it"
+                : root.chatDefer ? "Open AI tool"
                 : "Start listening"
             iconSize: Style.font.icon
             foreground: (root.recording || root.working) ? Color.accent : root.fg
@@ -400,6 +412,49 @@ Panel {
             font.pixelSize: Style.font.body
             wrapMode: Text.Wrap
             textFormat: Text.PlainText
+          }
+
+          // ---- Chat (non-command replies) ----
+          Item {
+            visible: root.chatReply || root.chatDefer
+            width: parent.width
+            implicitHeight: Math.max(chatLabel.implicitHeight, chatValue.implicitHeight)
+            Text {
+              id: chatLabel
+              text: root.chatDefer ? "AI tool" : "Answer"
+              color: root.dim
+              font.family: root.barFont
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              font.letterSpacing: 1.2
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              textFormat: Text.PlainText
+            }
+            Text {
+              id: chatValue
+              text: root.chatDefer ? root.chatDeferText : root.chatReplyText
+              color: root.fg
+              font.family: root.barFont
+              font.pixelSize: Style.font.body
+              wrapMode: Text.Wrap
+              anchors.left: chatLabel.right
+              anchors.leftMargin: Style.space(12)
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              textFormat: Text.PlainText
+            }
+          }
+          Button {
+            visible: root.chatDefer
+            focusable: true
+            text: "Open AI tool"
+            iconText: "\uF08E"
+            foreground: root.fg
+            accent: Color.accent
+            height: Style.space(34)
+            width: parent.width
+            onClicked: root.cmd("chat-tool")
           }
 
           // ---- Action / target ----

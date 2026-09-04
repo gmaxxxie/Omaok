@@ -41,6 +41,8 @@ Item {
   property string transcript: ""
   property string error: ""
   property var result: null
+  property string chatReplyText: ""
+  property string chatDeferText: ""
 
   // ---- pet geometry, driven by pet.json ----
   property bool petVisible: true
@@ -55,11 +57,14 @@ Item {
   readonly property bool awaiting: root.phase === "awaiting_confirm"
   readonly property bool working: root.phase === "transcribing" || root.phase === "executing"
   readonly property bool showResult: root.phase === "result"
+  readonly property bool chatReply: root.phase === "chat_reply"
+  readonly property bool chatDefer: root.phase === "chat_defer"
+  readonly property bool chatPhase: root.chatReply || root.chatDefer
   readonly property bool errorPhase: root.phase === "idle" && root.error !== ""
-  readonly property bool cancellable: root.recording || root.working || root.awaiting
+  readonly property bool cancellable: root.recording || root.working || root.awaiting || root.chatPhase
   readonly property bool bubbleShown: root.phase !== "idle" || root.errorPhase || root.hovered
   readonly property int bubbleTextW:
-    root.awaiting || root.showResult || root.errorPhase ? 212 : 160
+    root.awaiting || root.showResult || root.errorPhase || root.chatPhase ? 212 : 160
   readonly property int petSize: Math.max(48, Math.round(100 * root.petScale))
 
   // phase (display) -> sprite file under ui/pet/. Remap here or rename the PNGs.
@@ -101,6 +106,8 @@ Item {
     root.transcript = root.scrub(o.transcript || "")
     root.error = root.scrub(o.error || "")
     root.result = o.result || null
+    root.chatReplyText = root.scrub(o.chat_reply || "")
+    root.chatDeferText = root.scrub(o.chat_defer || "")
   }
 
   function parsePet() {
@@ -164,6 +171,8 @@ Item {
 
   function bubbleText() {
     if (root.errorPhase) return "⚠ " + (root.error || "Something went wrong")
+    if (root.chatReply) return root.chatReplyText || "—"
+    if (root.chatDefer) return root.chatDeferText + "\n\u2192 open AI tool?"
     if (root.phase === "recording") return "Listening…\ntap again to finish · right-click to cancel"
     if (root.phase === "transcribing") return "Thinking… (right-click to cancel)"
     if (root.phase === "executing") return "Working… (right-click to cancel)"
@@ -185,6 +194,8 @@ Item {
     if (root.recording) { root.cmdCli(["record", "stop"]); return }
     if (root.working) { return }
     if (root.phase === "result") { root.cmdCli(["cancel-action"]); return }
+    if (root.chatReply) { root.cmdCli(["cancel-action"]); return }   // dismiss the answer
+    if (root.chatDefer) { root.cmdCli(["chat-tool"]); return }        // open the AI tool
     root.cmdCli(["record", "start"])
   }
 
@@ -193,6 +204,8 @@ Item {
   // processing -> stop and discard the audio.
   function cancelPending() {
     if (root.awaiting) { root.cmdCli(["cancel-action"]); return }
+    if (root.chatReply) { root.cmdCli(["cancel-action"]); return }
+    if (root.chatDefer) { root.cmdCli(["cancel-action"]); return }
     if (root.recording || root.working) { root.cmdCli(["record", "cancel"]); return }
   }
 

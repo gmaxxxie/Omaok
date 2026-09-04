@@ -108,9 +108,13 @@ class TestStateMachine(unittest.TestCase):
         self.assertEqual(state_mod.load_state()["phase"], "idle")
 
     def test_unknown_phrase_never_executes(self):
-        self._set_transcript("今天天气怎么样")
-        cli_mod.cmd_record_start()
-        cli_mod.cmd_record_stop()
+        # The chat fallback is also mocked to None so this stays a pure
+        # "unknown phrase must never execute" invariant test (chat handling is
+        # covered separately in test_model_picker/test chat fallback).
+        with mock.patch.object(cli_mod.intent_ai, "chat_analyze", return_value=None):
+            self._set_transcript("今天天气怎么样")
+            cli_mod.cmd_record_start()
+            cli_mod.cmd_record_stop()
         st = state_mod.load_state()
         self.assertEqual(st["phase"], "idle")
         self.assertIn("understand", st["error"])

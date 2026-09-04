@@ -239,5 +239,81 @@ class TestConfigPersistence(unittest.TestCase):
         self.assertEqual(cli_mod.cmd_config(["set", "ai.thinking", "turbo"]), 2)  # invalid
 
 
+class TestChatFallback(unittest.TestCase):
+    """Non-command transcripts get a short answer (chat_reply) or an AI-tool
+    handoff (chat_defer); neither ever executes an action."""
+
+    def _run(self, transcript, chat_result=None):
+        import state as state_mod
+        import cli as cli_mod
+        state_mod.load_state()
+        with mock.patch.object(cli_mod.stt, "transcribe", return_value=transcript):
+            with mock.patch.object(cli_mod.intent_rules, "parse", return_value=None):
+                with mock.patch.object(cli_mod.intent_ai, "analyze", return_value=None):
+                    with mock.patch.object(cli_mod.intent_ai, "chat_analyze", return_value=chat_result) as ca:
+                        cli_mod._process_transcript(
+                            state_mod.load_state(),
+                            cli_mod.settings.load_config(),
+                            cli_mod.settings.load_aliases(),
+                        )
+                        return state_mod.load_state(), ca
+
+    def test_simple_question_gets_answer(self):
+        st, ca = self._run("法国的首都是哪里", {"kind": "answer", "reply": "巴黎。"})
+        self.assertEqual(st["phase"], "chat_reply")
+        self.assertEqual(st["chat_reply"], "巴黎。")
+        self.assertEqual(st["error"], "")
+        self.assertIsNone(st["action"])
+
+    def test_complex_topic_gets_defer(self):
+        st, ca = self._run("分析量子计算", {"kind": "defer", "reply": "深入研究量子计算"})
+        self.assertEqual(st["phase"], "chat_defer")
+        self.assertEqual(st["chat_defer"], "深入研究量子计算")
+        self.assertIsNone(st["action"])
+
+    def test_chat_disabled_keeps_old_behavior(self):
+        import state as state_mod
+        import cli as cli_mod
+        cfg = cli_mod.settings.load_config()
+        cfg["chat"] = {"enabled": False}
+        with mock.patch.object(cli_mod.settings, "load_config", return_value=cfg):
+            with mock.patch.object(cli_mod.stt, "transcribe", return_value="随便说的"):
+                with mock.patch.object(cli_mod.intent_rules, "parse", return_value=None):
+                    with mock.patch.object(cli_mod.intent_ai, "analyze", return_value=None):
+                        with mock.patch.object(cli_mod.intent_ai, "chat_analyze") as ca:
+                            cli_mod._process_transcript(
+                                state_mod.load_state(), cfg,
+                                cli_mod.settings.load_aliases(),
+                            )
+                            ca.assert_not_called()
+        st = state_mod.load_state()
+        self.assertEqual(st["phase"], "idle")
+        self.assertIn("understand", st["error"])
+
+    def test_chat_tool_launches_configured_command(self):
+        import cli as cli_mod
+        with mock.patch("cli.subprocess.Popen") as pop:
+            rc = cli_mod.cmd_chat_tool()
+        self.assertEqual(rc, 0)
+        pop.assert_called_once()
+        self.assertEqual(pop.call_args[0][0][0], "chromium")
+
+    def test_chat_analyze_kinds(self):
+        import intent.ai as ai
+        self.assertEqual(ai.chat_analyze("  ", {"ai": {"enabled": True}}), None)  # blank
+        self.assertEqual(ai.chat_analyze("hi", {"ai": {"enabled": False}}), None)  # disabled
+        with mock.patch.object(ai, "_backend_of", return_value="pi-rpc"):
+            with mock.patch.object(ai, "_chat_rpc_text",
+                                   return_value='{"kind": "answer", "reply": "巴黎"}'):
+                self.assertEqual(ai.chat_analyze("法国的首都", {"ai": {"enabled": True}}),
+                                 {"kind": "answer", "reply": "巴黎"})
+            with mock.patch.object(ai, "_chat_rpc_text",
+                                   return_value='{"kind": "defer", "reply": "深入研究"}'):
+                self.assertEqual(ai.chat_analyze("复杂问题", {"ai": {"enabled": True}}),
+                                 {"kind": "defer", "reply": "深入研究"})
+            with mock.patch.object(ai, "_chat_rpc_text", return_value="not json"):
+                self.assertIsNone(ai.chat_analyze("x", {"ai": {"enabled": True}}))
+
+
 if __name__ == "__main__":
     unittest.main()

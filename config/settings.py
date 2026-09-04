@@ -33,6 +33,11 @@ DEFAULT_CONFIG = {
         "timeout_secs": 60,
         "idle_secs": 900,          # ai-daemon exits after this idle (auto-respawned)
     },
+    "chat": {
+        "enabled": True,           # non-command transcripts get a short reply / AI-tool handoff
+        "tool": "chromium --app=https://chatgpt.com",  # complex topics -> open this AI tool
+        "tool_label": "ChatGPT",
+    },
     "recorder": {
         "device": "default",
         "max_seconds": 30,

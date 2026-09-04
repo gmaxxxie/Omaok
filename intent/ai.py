@@ -838,3 +838,77 @@ def analyze(transcript: str, cfg: dict) -> dict | None:
     if obj is None:
         return None
     return _to_draft(obj)
+
+
+# ---------------------------------------------------------------------------
+# Chat fallback: when a transcript is NOT a desktop command (rules + intent AI
+# both came back empty), ask the model whether it is a simple question we can
+# answer inline (answer), a complex/open topic that deserves a real AI tool
+# (defer), or nothing meaningful (none). Single-turn only, never executed.
+# ---------------------------------------------------------------------------
+
+_CHAT_BACKENDS = _BACKENDS
+
+
+def _chat_prompt(transcript: str) -> str:
+    return f"""You are a brief conversational assistant inside a desktop voice-control app.
+The user said something that is NOT a computer command. Decide how to handle it.
+
+Output ONLY a JSON object, no markdown, no explanation:
+{{"kind": "answer"|"defer"|"none", "reply": "<short text>"}}
+
+- kind=answer: the user asked a simple question that can be answered in 1-2 short sentences. reply = that answer, plain text, no markdown, under 120 chars, in the user's language.
+- kind=defer: the question is complex, open-ended, needs deep research/discussion, or you are not confident — reply = a short prompt (max 40 chars, in the user's language) to hand off to a full AI tool, e.g. "深入研究这个主题" / "帮我查一下并讨论".
+- kind=none: the input is just noise, a greeting, or has no meaning — reply = "".
+
+User said: {transcript}"""
+
+
+def _chat_rpc_text(prompt: str, cfg: dict, timeout: float) -> str:
+    """One-shot text from the pi backend (warm daemon not used — chat is
+    infrequent, a cold spawn is fine and avoids coupling to the intent daemon)."""
+    proc = _spawn_pi(cfg)
+    try:
+        _send(proc, {"type": "set_thinking_level", "id": "th", "level": _thinking_level(cfg)})
+        return _prompt_on(proc, prompt, timeout)
+    finally:
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+
+def chat_analyze(transcript: str, cfg: dict) -> dict | None:
+    """Return {{kind, reply}} for a non-command transcript, or None on failure.
+    Never raises. kind: answer | defer | none."""
+    if not transcript or len(transcript.strip()) < 2:
+        return None
+    ai = cfg.get("ai") or {}
+    if not ai.get("enabled", True):
+        return None
+    prompt = _chat_prompt(transcript)
+    timeout = float(ai.get("timeout_secs", 60))
+    text = None
+    backend = _backend_of(cfg)
+    try:
+        if backend == "opencode":
+            text = _opencode_prompt(prompt, cfg, timeout)
+        elif backend == "codex":
+            text = _codex_prompt(prompt, cfg, timeout)
+        else:
+            text = _chat_rpc_text(prompt, cfg, timeout)
+    except AIError:
+        return None
+    obj = _extract_json(text)
+    if not isinstance(obj, dict):
+        return None
+    kind = obj.get("kind")
+    if kind not in ("answer", "defer", "none"):
+        return None
+    reply = str(obj.get("reply") or "").strip()
+    return {"kind": kind, "reply": reply[:200]}
+
