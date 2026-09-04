@@ -42,3 +42,23 @@ Goal: a basic, operable Omarchy voice-control extension (goal 8d7e5501).
 - Provider status in UI: "Voxtype ready - small-fp32".
 - No text injection: provider only ever runs `voxtype transcribe` (tested).
 - qmllint clean, `omarchy plugin validate` OK, no QML errors after fix + restart.
+
+## 明日研发任务 (2026-09-06) — 长对话 + 长短记忆 + 更多快速规则
+
+已完成的上下文：决策漏斗五层 (L1规则→L2常用指令→L3 AI指令→L4对话→L5 AI工具,
+commit 6d668c9)；人设 omaok (`config/character.py`, c3920bb)；补充 L1 规则
+(把…打开/把…关了/音量/媒体/提醒/截图/锁屏变体, 134 tests)；方案文档
+`docs/design-chat-memory.md`（4 个待用户确认点）。
+
+- [ ] M1 短期记忆（长对话）：`intent/chat.py` + `chat.json` —— 滑动窗口(8轮)+滚动摘要；
+      会话生命周期（连续聊天同一 session，idle gap>10min 或执行命令→收尾开新会话）；
+      "结束对话/不聊了" 退出指令
+- [ ] M2 长期记忆：`memory/chatmem.py` + `memory/facts.json` —— 会话收尾 consolidate
+      蒸馏事实/偏好（去重/合并/冲突解决）；检索=关键词+recency+importance 取 top-K 注入 prompt
+- [ ] M3 cli.py L4 接入 chat session 层；`intent/ai.py` 复用（persona blurb 保留）
+- [ ] M4 显式记忆指令（待确认）：记住…/忘掉…/我上次说到哪了
+- [ ] M5 (v2 可选) 语义召回：SQLite+FTS5(trigram 中文)+sqlite-vec+本地 ONNX embedding(bge-small-zh)
+- [ ] M6 继续扩充 L1 规则 + 常用指令（operation memory 预热），把更多口语压到快速通道
+- [ ] M7 测试：窗口轮转/summary、consolidate 去重、retrieve 打分排序、命令↔对话边界；
+      现有 134 测试保持通过
+- [ ] M8 端到端验证：真实语音长对话 + 跨会话记忆 + 泡泡显示连续性

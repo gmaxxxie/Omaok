@@ -278,5 +278,72 @@ class TestMediaExecutor(unittest.TestCase):
             self.assertEqual(run.call_args[0][0], ["omarchy", "brightness", "display", "+10%"])
 
 
+class TestSupplementaryRules(unittest.TestCase):
+    """L1 fast rules: polite/request phrasing + common variants must NOT fall
+    through to the AI layer (speed for computer-control commands)."""
+
+    def test_open_app_variants(self):
+        cases = [
+            ("把微信打开", "微信"), ("帮我把微信打开", "微信"), ("我想把浏览器打开", "浏览器"),
+            ("我要用微信", "微信"), ("帮我用一下计算器", "计算器"), ("我想用浏览器", "浏览器"),
+            ("点开终端", "终端"), ("呼出设置", "设置"),
+        ]
+        for phrase, target in cases:
+            d = rules.parse(phrase)
+            self.assertEqual(d["type"], "open_app", phrase)
+            self.assertEqual(d["raw_target"], target, phrase)
+
+    def test_open_folder_file_with_ba(self):
+        self.assertEqual(rules.parse("把下载文件夹打开")["type"], "open_folder")
+        self.assertEqual(rules.parse("把报告文件打开")["type"], "open_file")
+
+    def test_toggle_with_ba(self):
+        self.assertEqual(rules.parse("把wifi关了")["raw_target"], "off")
+        self.assertEqual(rules.parse("把wifi打开")["raw_target"], "on")
+        self.assertEqual(rules.parse("把蓝牙关了")["raw_target"], "off")
+        self.assertEqual(rules.parse("把蓝牙开开")["raw_target"], "on")
+        self.assertEqual(rules.parse("把夜灯关了")["raw_target"], "off")
+        self.assertEqual(rules.parse("把触摸板关了")["raw_target"], "off")
+
+    def test_volume_variants(self):
+        self.assertEqual(rules.parse("把声音调大")["type"], "volume_up")
+        self.assertEqual(rules.parse("把声音调小")["type"], "volume_down")
+        self.assertEqual(rules.parse("声音开到最大")["type"], "volume_up")
+        self.assertEqual(rules.parse("声音开到最小")["type"], "volume_down")
+        self.assertEqual(rules.parse("把声音关了")["type"], "toggle_mute")
+
+    def test_media_variants(self):
+        for phrase in ["暂停一下", "先暂停", "放首歌吧", "放首歌听", "换一首", "换首歌", "换回上一首"]:
+            self.assertIsNotNone(rules.parse(phrase), phrase)
+
+    def test_screenshot_lock_close_variants(self):
+        self.assertEqual(rules.parse("截个图")["type"], "take_screenshot")
+        self.assertEqual(rules.parse("帮我锁屏")["type"], "lock_screen")
+        self.assertEqual(rules.parse("锁一下屏")["type"], "lock_screen")
+        self.assertEqual(rules.parse("把当前窗口关上")["type"], "close_active_window")
+
+    def test_reminder_variants(self):
+        a = rules.parse("5分钟后提醒我喝水")
+        self.assertEqual(a["type"], "set_reminder")
+        self.assertEqual(a["minutes"], 5)
+        self.assertEqual(a["raw_target"], "喝水")
+        b = rules.parse("五分钟后提醒我喝水")
+        self.assertEqual(b["minutes"], 5)
+        c = rules.parse("提醒我在10分钟后休息")
+        self.assertEqual(c["minutes"], 10)
+        d = rules.parse("提醒我喝水")
+        self.assertEqual(d["type"], "set_reminder")
+        self.assertEqual(d["minutes"], 10)  # default when no time given
+
+    def test_move_window_variants(self):
+        self.assertEqual(rules.parse("把窗口切到工作区3")["type"], "move_active_window_to_workspace")
+        self.assertEqual(rules.parse("把窗口挪到工作区五")["raw_target"], "5")
+
+    def test_non_commands_stay_unparsed(self):
+        # Chat/persona/noise must NOT be hijacked by the new open rules.
+        for phrase in ["今天天气怎么样", "你是谁", "帮我写首诗", "什么是量子计算", "谢谢你", "讲个笑话"]:
+            self.assertIsNone(rules.parse(phrase), phrase)
+
+
 if __name__ == "__main__":
     unittest.main()
