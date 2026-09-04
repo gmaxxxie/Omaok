@@ -97,9 +97,15 @@ Panel {
   // Poll reload() until the file loads (which also (re)establishes the
   // watchers), then keep a slow safety-net poll in case the directory watch
   // ever goes quiet.
+  // `running: true` is REQUIRED: in Qt Quick a Timer's `running` defaults to
+  // false, and `repeat: true` only repeats once running — it does NOT start
+  // the timer. Without it this safety-net poll never fires and the UI stays
+  // frozen when the runtime dir (and thus the FileView watcher) does not
+  // exist yet at shell start.
   Timer {
     interval: stateFile.loaded ? 3000 : 700
     repeat: true
+    running: true
     onTriggered: stateFile.reload()
   }
 
