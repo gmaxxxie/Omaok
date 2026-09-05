@@ -45,6 +45,21 @@ Item {
   property string chatReplyText: ""
   property string chatDeferText: ""
   property bool chatmode: false
+  property string lang: "zh"          // effective zh/en — drives bubble strings
+  property var tr: ({})
+  readonly property var trZh: ({
+    clickTalk: "点击说话", chatmodeHint: "对话模式 · 点我退出", openAiToolQ: "打开AI工具？",
+    listening: "聆听中…\n再点一下结束 · 右键取消", thinking: "思考中…（右键取消）",
+    working: "执行中…（右键取消）", doThis: "执行这个？", wentWrong: "出错了", open: "打开"
+  })
+  readonly property var trEn: ({
+    clickTalk: "Click to talk", chatmodeHint: "Conversation mode · click to exit", openAiToolQ: "Open AI tool?",
+    listening: "Listening…\ntap again to finish · right-click to cancel", thinking: "Thinking… (right-click to cancel)",
+    working: "Working… (right-click to cancel)", doThis: "Do this?", wentWrong: "Something went wrong", open: "Open"
+  })
+  function buildStrings() { root.tr = root.lang === "en" ? root.trEn : root.trZh }
+  onLangChanged: root.buildStrings()
+  Component.onCompleted: root.buildStrings()
 
   // Typewriter reveal for chat replies (streaming feel): pi RPC delivers the
   // full reply at once (no token deltas), so the bubble types it out instead.
@@ -129,6 +144,7 @@ Item {
     root.chatReplyText = root.scrub(o.chat_reply || "")
     root.chatDeferText = root.scrub(o.chat_defer || "")
     root.chatmode = o.chatmode === true
+    root.lang = String(o.ui_lang || "zh")
   }
 
   function parsePet() {
@@ -257,22 +273,22 @@ Item {
   }
 
   function bubbleText() {
-    if (root.errorPhase) return "⚠ " + (root.error || "Something went wrong")
+    if (root.errorPhase) return "⚠ " + (root.error || root.tr.wentWrong)
     if (root.chatReply) return root.displayedReply || "—"
-    if (root.chatDefer) return root.chatDeferText + "\nOpen AI tool?"
+    if (root.chatDefer) return root.chatDeferText + "\n" + root.tr.openAiToolQ
     // (chat_defer shows an Open/Cancel button row below, see actionRow)
-    if (root.phase === "recording") return "Listening…\ntap again to finish · right-click to cancel"
-    if (root.phase === "transcribing") return "Thinking… (right-click to cancel)"
-    if (root.phase === "executing") return "Working… (right-click to cancel)"
+    if (root.phase === "recording") return root.tr.listening
+    if (root.phase === "transcribing") return root.tr.thinking
+    if (root.phase === "executing") return root.tr.working
     if (root.phase === "awaiting_confirm") {
       var t = root.transcript !== "" ? "\u201C" + root.transcript + "\u201D" : ""
-      return t + (t !== "" ? "\n" : "") + "Do this?"
+      return t + (t !== "" ? "\n" : "") + root.tr.doThis
     }
     if (root.phase === "result") {
       var ok = root.result && root.result.ok
       return (ok ? "\u2713 " : "\u2717 ") + (root.result ? root.result.message : "")
     }
-    return root.hovered ? "Click to talk" : (root.chatmode ? "对话模式 · 点我退出" : "") // idle: hover hint or chatmode indicator
+    return root.hovered ? root.tr.clickTalk : (root.chatmode ? root.tr.chatmodeHint : "") // idle: hover hint or chatmode indicator
   }
 
   // ---- click semantics (identical to the popover's activate()) ----
@@ -402,7 +418,7 @@ Item {
               width: (root.bubbleTextW - Style.space(8)) * 0.5
               height: Style.space(30)
               iconText: root.chatDefer ? "\uF08E" : "\uF00C"   // chat: ↗ open | awaiting: ✓
-              text: root.chatDefer ? "Open" : ""
+              text: root.chatDefer ? root.tr.open : ""
               foreground: "#f2f2f2"
               accent: Color.accent
               onClicked: {

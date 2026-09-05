@@ -121,7 +121,7 @@ _FILE_RE = re.compile(
 
 _OPEN_RE = re.compile(
     r"(?:打开|启动|开启|运行|调出|唤出|点开|唤起|呼出|拉出|调起来|开个)\s*(?:一下\s*)?(.+)"
-    r"|(?:open|launch|start|run|bring up)\s+(.+)",
+    r"|(?:open|launch|start|run|bring up)\s+(?:the\s+)?(.+)",
     re.I,
 )
 
@@ -167,8 +167,10 @@ _PREV_RE = re.compile(r"上一首|上一曲|切回上一首|换回上一首|上�
 _VOLUME_UP_RE = re.compile(r"调大音量|音量调大|音量加|增大音量|调高音量|声音大点|大声点|声音大一点|把声音(?:调大|调高|开大|放大|大点|大一点)|声音(?:调大|调高|开大|放大|大点|大一点)|音量开到最大|声音开到最大|开到最大音量|开到最大|最大音量|volume up|turn up|louder", re.I)
 _VOLUME_DOWN_RE = re.compile(r"调小音量|音量调小|音量减|减小音量|调低音量|声音小点|小声点|声音小一点|把声音(?:调小|调低|开小|放小|小点|小一点)|声音(?:调小|调低|开小|放小|小点|小一点)|音量开到最小|声音开到最小|开到最小音量|开到最小|最小音量|volume down|turn down|quieter", re.I)
 # 调到最大/最小 variants (checked after the generic up/down so bare 调大/调小 still win).
-_VOLUME_MAX_RE = re.compile(r"音量调到(?:最大|最高)|把音量调到(?:最大|最高)|声音调到(?:最大|最高)|把声音调到(?:最大|最高)|调到最大音量|调最大", re.I)
-_VOLUME_MIN_RE = re.compile(r"音量调到(?:最小|最低)|把音量调到(?:最小|最低)|声音调到(?:最小|最低)|把声音调到(?:最小|最低)|调到最小音量|调最小", re.I)
+_VOLUME_MAX_RE = re.compile(r"音量调到(?:最大|最高)|把音量调到(?:最大|最高)|声音调到(?:最大|最高)|把声音调到(?:最大|最高)|调到最大音量|调最大"
+                            r"|volume to max|volume to maximum|set (?:the )?volume to (?:max|maximum|full)|turn (?:the )?volume up all the way|max volume|maximum volume|full volume", re.I)
+_VOLUME_MIN_RE = re.compile(r"音量调到(?:最小|最低)|把音量调到(?:最小|最低)|声音调到(?:最小|最低)|把声音调到(?:最小|最低)|调到最小音量|调最小"
+                            r"|volume to min|volume to minimum|set (?:the )?volume to (?:min|minimum|zero|mute)|turn (?:the )?volume down all the way|min volume|minimum volume", re.I)
 _MUTE_RE = re.compile(r"静音|关闭声音|取消静音|打开声音|把声音(?:关了|关掉)|mute|unmute|silence", re.I)
 
 # ---- conventional omarchy toggles (batch 1) ----
@@ -213,8 +215,8 @@ _REMINDER_V2_RE = re.compile(
 )
 # 提醒我喝水 (no explicit time) -> default reminder
 _REMINDER_DEFAULT_RE = re.compile(r"提醒(?:我)?\s*(.+?)\s*(?:一下)?\s*$|remind me (?:to )?(.+)", re.I)
-_BRIGHT_UP_RE = re.compile(r"调亮屏幕|屏幕调亮|亮度调高|调高亮度|增亮|亮一点|screen brighter|brightness up", re.I)
-_BRIGHT_DOWN_RE = re.compile(r"调暗屏幕|屏幕调暗|亮度调低|调低亮度|变暗|暗一点|screen darker|brightness down", re.I)
+_BRIGHT_UP_RE = re.compile(r"调亮屏幕|屏幕调亮|亮度调高|调高亮度|增亮|亮一点|screen brighter|brightness up|increase brightness|brighten(?: up)? (?:the )?screen|make (?:the )?screen brighter", re.I)
+_BRIGHT_DOWN_RE = re.compile(r"调暗屏幕|屏幕调暗|亮度调低|调低亮度|变暗|暗一点|screen darker|brightness down|decrease brightness|dim (?:the )?screen|make (?:the )?screen darker", re.I)
 
 # ---- destructive / privacy-sensitive (batch 3, confirm_required) ----
 _SHUTDOWN_RE = re.compile(r"关机|shutdown|power off|poweroff", re.I)
@@ -237,7 +239,7 @@ _CLOSE_ALL_RE = re.compile(
     re.I,
 )
 _TILED_FS_RE = re.compile(r"平铺全屏|平铺模式|tiled fullscreen|tiled full screen", re.I)
-_GAPS_RE = re.compile(r"窗口间距|窗口缝隙|把间距(?:调|关|开)|gap(?:s)?\s*(?:toggle|off|on)", re.I)
+_GAPS_RE = re.compile(r"窗口间距|窗口缝隙|把间距(?:调|关|开)|gap(?:s)?\s*(?:toggle|off|on)|toggle window gaps|turn (?:on|off) window gaps|window gaps (?:on|off)|show window gaps", re.I)
 _TRANSPARENCY_RE = re.compile(
     r"透明窗口|窗口透明|把窗口(?:变|调|设成)?透明|窗口变透明|window transparency|make window transparent",
     re.I,

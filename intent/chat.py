@@ -20,10 +20,23 @@ from datetime import datetime
 
 from config import chatmem
 from config import character as character_mod
+from config import settings as settings_mod
 from intent import ai as intent_ai
 
-CLOSING_REPLY = "不客气～有事随时叫我。"
 
+def _reply_lang(text: str, cfg: dict | None = None) -> str:
+    """Resolve the reply language: ui.language config ('zh'|'en') forces the
+    whole assistant into that version; 'auto'/unset falls back to per-utterance
+    CJK auto-detect (so mixed bilingual users get the right language either way)."""
+    if cfg is not None:
+        lang = settings_mod.ui_language(cfg)
+        if lang in ("zh", "en"):
+            return lang
+    return "zh" if _has_cjk(text) else "en"
+
+
+def _closing_reply(lang: str) -> str:
+    return "不客气～有事随时叫我。" if lang == "zh" else "Anytime! Just call me when you need me."
 
 # ---------------------------------------------------------------------------
 # Offline local-facts answers (time / date / weekday / battery).
@@ -66,15 +79,16 @@ def _zh_period(hour: int) -> str:
     return "晚上"
 
 
-def local_fact_answer(text: str) -> tuple | None:
-    """Return (reply, kind) for an offline local-fact question, or None."""
+def local_fact_answer(text: str, cfg: dict | None = None) -> tuple | None:
+    """Return (reply, kind) for an offline local-fact question, or None.
+    cfg (optional) lets ui.language force zh/en; otherwise auto-detected."""
     if not text or not text.strip():
         return None
     t = re.sub(r"[，。！？、；：“”‘’《》【】（）…·!?.,;:()\[\]\"'<>{}|/\\]", " ", text)
     t = re.sub(r"\s+", " ", t).strip()
     if not t:
         return None
-    zh = _has_cjk(text)
+    zh = _reply_lang(text, cfg) == "zh"
     now = datetime.now()
     for rx, kind in _LOCAL_FACT_PATTERNS:
         if not rx.search(t):
@@ -129,6 +143,7 @@ def precheck(text: str, cfg):
     text = (text or "").strip()
     if not text:
         return None
+    lang = _reply_lang(text, cfg)
 
     pa = character_mod.match(text)
     if pa:
@@ -137,14 +152,14 @@ def precheck(text: str, cfg):
 
     cmd = chatmem.explicit_command(text)
     if cmd:
-        return _handle_explicit(cmd, cfg)
+        return _handle_explicit(cmd, cfg, lang)
 
     if chatmem.is_closing(text):
-        _note(text, CLOSING_REPLY, cfg)
+        _note(text, _closing_reply(lang), cfg)
         chatmem.park()
-        return {"kind": "answer", "reply": CLOSING_REPLY, "via": "memory", "end": True}
+        return {"kind": "answer", "reply": _closing_reply(lang), "via": "memory", "end": True}
 
-    loc = local_fact_answer(text)
+    loc = local_fact_answer(text, cfg)
     if loc:
         reply, via = loc
         return {"kind": "answer", "reply": reply, "via": via}
@@ -195,44 +210,70 @@ def _note(text: str, reply: str, cfg) -> None:
     _maybe_summarize(cfg)
 
 
-def _handle_explicit(cmd, cfg):
+def _handle_explicit(cmd, cfg, lang: str | None = None):
+    """Offline memory/conversation commands -> bilingual replies. lang is the
+    resolved reply language (None -> auto-detect from the command text)."""
+    zh = lang == "zh"
+    if lang is None:
+        zh = _has_cjk(arg or "")
     kind, arg = cmd
     if kind == "remember":
         facts = chatmem.load_facts()
         chatmem.add_fact(facts, arg, "fact", source="user request")
         chatmem.save_facts(facts)
-        return {"kind": "answer", "reply": "记住了：%s" % arg, "via": "memory"}
+        return {"kind": "answer", "reply": ("记住了：%s" % arg) if zh else ("Got it: %s" % arg), "via": "memory"}
     if kind == "forget":
         facts = chatmem.load_facts()
         removed = chatmem.forget(arg, facts)
-        reply = "好，相关的事情已经忘掉啦" if removed else "我好像没有这方面的记忆哦"
+        if zh:
+            reply = "好，相关的事情已经忘掉啦" if removed else "我好像没有这方面的记忆哦"
+        else:
+            reply = "Done, I've forgotten about that." if removed else "I don't think I have any memory of that."
         return {"kind": "answer", "reply": reply, "via": "memory"}
     if kind == "recall":
         s = chatmem.load_session()
         summary = s.get("summary", "")
         turns = chatmem.recent_turns(s, 4)
-        if summary or turns:
-            bits = []
-            if summary:
-                bits.append("之前聊到：" + summary)
-            if turns:
-                bits.append("刚说到：" + turns[-1].get("text", ""))
-            reply = "；".join(bits)[:300]
-        else:
-            facts = chatmem.load_facts()
-            if facts:
-                reply = "我记得一些关于你的事：" + "；".join(f["text"] for f in facts[-3:])
+        if zh:
+            if summary or turns:
+                bits = []
+                if summary:
+                    bits.append("之前聊到：" + summary)
+                if turns:
+                    bits.append("刚说到：" + turns[-1].get("text", ""))
+                reply = "；".join(bits)[:300]
             else:
-                reply = "我们好像还没好好聊过呢～"
+                facts = chatmem.load_facts()
+                if facts:
+                    reply = "我记得一些关于你的事：" + "；".join(f["text"] for f in facts[-3:])
+                else:
+                    reply = "我们好像还没好好聊过呢～"
+        else:
+            if summary or turns:
+                bits = []
+                if summary:
+                    bits.append("Earlier: " + summary)
+                if turns:
+                    bits.append("Last topic: " + turns[-1].get("text", ""))
+                reply = "; ".join(bits)[:300]
+            else:
+                facts = chatmem.load_facts()
+                if facts:
+                    reply = "I remember a few things about you: " + "; ".join(f["text"] for f in facts[-3:])
+                else:
+                    reply = "We haven't really talked yet. 😊"
         return {"kind": "answer", "reply": reply, "via": "memory"}
     if kind == "end":
         chatmem.park()  # stash turns for lazy consolidation at next chat
-        return {"kind": "answer", "reply": "好，先聊到这儿～ 想我的时候随时叫我。", "via": "memory"}
+        reply = "好，先聊到这儿～ 想我的时候随时叫我。" if zh else "Alright, let's pause here. Call me anytime."
+        return {"kind": "answer", "reply": reply, "via": "memory"}
     if kind == "chatmode_on":
-        return {"kind": "answer", "reply": "好，对话模式已开启～ 说完话停一下就行，想退出就说“结束对话”。",
-                "via": "memory", "mode": "on"}
+        reply = ("好，对话模式已开启～ 说完话停一下就行，想退出就说“结束对话”。" if zh else
+                 "Conversation mode is on — just pause after speaking. Say \"end conversation\" to stop.")
+        return {"kind": "answer", "reply": reply, "via": "memory", "mode": "on"}
     if kind == "chatmode_off":
-        return {"kind": "answer", "reply": "好，已退出对话模式。", "via": "memory", "mode": "off"}
+        reply = "好，已退出对话模式。" if zh else "OK, conversation mode is off."
+        return {"kind": "answer", "reply": reply, "via": "memory", "mode": "off"}
     return None
 
 

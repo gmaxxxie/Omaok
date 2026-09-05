@@ -369,64 +369,70 @@ def _finish(action: dict, target: dict, confidence: float) -> dict:
     return action
 
 
-def describe(action: dict) -> str:
-    """Human-readable one-line description of the resolved action for the UI."""
+def describe(action: dict, lang: str = "en") -> str:
+    """Human-readable one-line description of the resolved action for the UI.
+    lang="en"|"zh" picks the label language; defaults to English for
+    backward compatibility."""
+    zh = lang == "zh"
     t = action.get("type", "")
     target = action.get("target") or {}
     labels = {
-        "open_app": "Open app",
-        "focus_app": "Focus app",
-        "open_file": "Open file",
-        "open_folder": "Open folder",
-        "close_active_window": "Close active window",
-        "close_all_windows": "Close all windows",
-        "maximize_window": "Maximize window",
-        "toggle_tiled_fullscreen": "Toggle tiled fullscreen",
-        "toggle_window_gaps": "Toggle window gaps",
-        "toggle_window_transparency": "Toggle window transparency",
-        "wake_screen": "Wake screen",
-        "toggle_weather": "Toggle weather panel",
-        "extract_screen_text": "Extract screen text (OCR)",
-        "scan_qr": "Scan QR code",
-        "switch_workspace": "Switch workspace",
-        "move_active_window_to_workspace": "Move active window",
-        "toggle_fullscreen": "Toggle fullscreen",
-        "take_screenshot": "Take screenshot",
-        "lock_screen": "Lock screen",
-        "play_pause_media": "Play / pause media",
-        "next_track": "Next track",
-        "previous_track": "Previous track",
-        "volume_up": "Volume up",
-        "volume_down": "Volume down",
-        "toggle_mute": "Toggle mute",
-        "set_nightlight": "Night light",
-        "set_bluetooth": "Bluetooth",
-        "set_wifi": "Wi-Fi",
-        "set_touchpad": "Touchpad",
-        "toggle_dnd": "Do not disturb",
-        "toggle_mic": "Microphone mute",
-        "toggle_bar": "Toggle bar",
-        "open_clipboard": "Open clipboard",
-        "open_emoji": "Open emoji picker",
-        "set_reminder": "Set reminder",
-        "brightness_up": "Brightness up",
-        "brightness_down": "Brightness down",
-        "set_power_mode": "Power mode",
-        "shutdown": "Shut down",
-        "reboot": "Reboot",
-        "logout": "Log out",
-        "screen_record_start": "Start screen recording",
-        "screen_record_stop": "Stop screen recording",
+        "open_app": ("打开应用", "Open app"),
+        "focus_app": ("聚焦应用", "Focus app"),
+        "open_file": ("打开文件", "Open file"),
+        "open_folder": ("打开文件夹", "Open folder"),
+        "close_active_window": ("关闭当前窗口", "Close active window"),
+        "close_all_windows": ("关闭所有窗口", "Close all windows"),
+        "maximize_window": ("最大化窗口", "Maximize window"),
+        "toggle_tiled_fullscreen": ("切换平铺全屏", "Toggle tiled fullscreen"),
+        "toggle_window_gaps": ("切换窗口间距", "Toggle window gaps"),
+        "toggle_window_transparency": ("切换窗口透明", "Toggle window transparency"),
+        "wake_screen": ("唤醒屏幕", "Wake screen"),
+        "toggle_weather": ("切换天气面板", "Toggle weather panel"),
+        "extract_screen_text": ("提取屏幕文字", "Extract screen text (OCR)"),
+        "scan_qr": ("扫描二维码", "Scan QR code"),
+        "switch_workspace": ("切换工作区", "Switch workspace"),
+        "move_active_window_to_workspace": ("移动当前窗口", "Move active window"),
+        "toggle_fullscreen": ("切换全屏", "Toggle fullscreen"),
+        "take_screenshot": ("截图", "Take screenshot"),
+        "lock_screen": ("锁屏", "Lock screen"),
+        "play_pause_media": ("播放/暂停媒体", "Play / pause media"),
+        "next_track": ("下一首", "Next track"),
+        "previous_track": ("上一首", "Previous track"),
+        "volume_up": ("调大音量", "Volume up"),
+        "volume_down": ("调小音量", "Volume down"),
+        "toggle_mute": ("静音切换", "Toggle mute"),
+        "set_nightlight": ("夜灯", "Night light"),
+        "set_bluetooth": ("蓝牙", "Bluetooth"),
+        "set_wifi": ("无线网络", "Wi-Fi"),
+        "set_touchpad": ("触摸板", "Touchpad"),
+        "toggle_dnd": ("勿扰模式", "Do not disturb"),
+        "toggle_mic": ("麦克风静音", "Microphone mute"),
+        "toggle_bar": ("切换顶栏", "Toggle bar"),
+        "open_clipboard": ("打开剪贴板", "Open clipboard"),
+        "open_emoji": ("打开表情选择器", "Open emoji picker"),
+        "set_reminder": ("设置提醒", "Set reminder"),
+        "brightness_up": ("调亮屏幕", "Brightness up"),
+        "brightness_down": ("调暗屏幕", "Brightness down"),
+        "set_power_mode": ("电源模式", "Power mode"),
+        "shutdown": ("关机", "Shut down"),
+        "reboot": ("重启", "Reboot"),
+        "logout": ("注销登录", "Log out"),
+        "screen_record_start": ("开始录屏", "Start screen recording"),
+        "screen_record_stop": ("停止录屏", "Stop screen recording"),
     }
-    base = labels.get(t, t)
+    pair = labels.get(t)
+    base = (pair[0] if zh else pair[1]) if pair else t
     if t in ("open_app", "focus_app"):
         return "%s: %s" % (base, target.get("name") or target.get("command") or "")
     if t in ("open_file", "open_folder"):
         return "%s: %s" % (base, target.get("path") or "")
     if t in ("switch_workspace", "move_active_window_to_workspace"):
+        if zh:
+            return ("切换到工作区 %s" if t == "switch_workspace" else "移动到工作区 %s") % target.get("id")
         return "%s: workspace %s" % (base, target.get("id"))
     if t in ("set_nightlight", "set_bluetooth", "set_wifi", "set_touchpad", "set_power_mode"):
         return "%s: %s" % (base, target.get("state"))
     if t == "set_reminder":
-        return "%s: %s min (%s)" % (base, target.get("minutes"), target.get("message") or "")
+        return "%s: %s %s (%s)" % (base, target.get("minutes"), ("分钟" if zh else "min"), target.get("message") or "")
     return base

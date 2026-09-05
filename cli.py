@@ -12,7 +12,9 @@ Subcommands:
   chat-tool              Launch the configured AI tool (chat.tool) for discussion
   refresh-provider       Re-probe Voxtype status into state.json
   config get [path]      Print config (or one dotted path)
-  config set <path> <v>  Persist a setting (stt.*, ai.*) to user config
+  config set <path> <v>  Persist a setting (stt.*, ai.*, ui.language) to user config
+  lang [zh|en|auto]      Language switch: UI + STT + replies (print current when
+                         no arg). zh=中文, en=English, auto=locale/auto-detect
   models [stt|ai]        List installed STT / available AI models as JSON
   catalog                Generate the machine command catalog (config/catalog.json)
   blocklist              Print the effective path blocklist
@@ -257,7 +259,7 @@ def _process_transcript(st: dict, cfg: dict, aliases: dict) -> None:
     memory_mod.remember(draft, text, action["confidence"])
 
     st["action"] = action
-    st["target_desc"] = resolver.describe(action)
+    st["target_desc"] = resolver.describe(action, lang=settings.effective_ui_language(cfg))
     if verdict["confirm"]:
         st["phase"] = "awaiting_confirm"
         write_state(st)
@@ -268,7 +270,7 @@ def _process_transcript(st: dict, cfg: dict, aliases: dict) -> None:
     write_state(st)
     audit("auto-executing (low risk): %s %s" % (action["type"], st["target_desc"]))
     ok, message = executor.execute(action, cfg)
-    _record_result(resolver.describe(action), ok, message)
+    _record_result(resolver.describe(action, lang=settings.effective_ui_language(cfg)), ok, message)
 
 
 def _record_result(target_desc: str, ok: bool, message: str) -> None:
@@ -650,7 +652,7 @@ def cmd_confirm() -> int:
     write_state(st)
     audit("executing %s %s" % (action["type"], action.get("target", {})))
     ok, message = executor.execute(action, cfg)
-    _record_result(st.get("target_desc") or resolver.describe(action), ok, message)
+    _record_result(st.get("target_desc") or resolver.describe(action, lang=settings.effective_ui_language(cfg)), ok, message)
     return 0 if ok else 1
 
 
@@ -747,6 +749,8 @@ def _provider_info(cfg: dict) -> dict:
     ]
     stt_status["stt_engine"] = cur_stt_engine
     stt_status["stt_model"] = cur_stt_model
+    stt_status["stt_language"] = (cfg.get("stt") or {}).get("language") or "zh"
+    stt_status["ui_language"] = settings.effective_ui_language(cfg)
 
     # AI intent layer: current model/thinking + the ready-model option list.
     ai_models = intent_ai.list_available_models(cfg)
@@ -784,11 +788,16 @@ def cmd_config(argv: list) -> int:
     if argv[0] != "set" or len(argv) < 3:
         return _err("usage: config set <path> <value>")
     path, value = argv[1], argv[2]
-    allowed = {"stt.engine", "stt.model", "stt.language", "ai.enabled", "ai.backend", "ai.model", "ai.thinking"}
+    allowed = {"stt.engine", "stt.model", "stt.language", "ai.enabled", "ai.backend", "ai.model", "ai.thinking", "ui.language"}
     if path not in allowed:
         return _err("config set: unsupported path %r (allowed: %s)" % (path, ", ".join(sorted(allowed))))
 
-    if path == "ai.enabled":
+    if path == "ui.language":
+        value = value.lower()
+        if value not in ("zh", "en", "auto"):
+            return _err("config set ui.language: expected zh|en|auto, got %r" % value)
+        patch = {"ui": {"language": value}}
+    elif path == "ai.enabled":
         patch = {"ai": {"enabled": value.lower() in ("1", "true", "yes", "on")}}
     elif path == "ai.thinking":
         level = value.lower()
@@ -813,6 +822,9 @@ def cmd_config(argv: list) -> int:
             return _err("config set stt.model: %s/%s not installed" % (engine, model))
         patch = {"stt": {"engine": engine, "model": model}}
     elif path == "stt.language":
+        value = value.lower()
+        if value not in ("zh", "en", "auto", "yue", "ja", "ko"):
+            return _err("config set stt.language: expected zh|en|auto|yue|ja|ko, got %r" % value)
         patch = {"stt": {"language": value}}
     elif path == "ai.backend":
         if value not in intent_ai._BACKENDS:
@@ -832,6 +844,27 @@ def cmd_config(argv: list) -> int:
         # change; opencode/codex are one-shot so nothing to restart.
         if intent_ai._backend_of(settings.load_config()) == "pi-rpc":
             intent_ai.restart_daemon()
+    cmd_refresh_provider()
+    return 0
+
+
+def cmd_lang(argv: list) -> int:
+    """Language switch: `lang [zh|en|auto]`. Sets BOTH ui.language (UI + chat
+    replies) and stt.language (voice recognition) so one toggle flips the whole
+    assistant. No arg prints the current setting + effective UI language."""
+    cfg, _aliases = _load()
+    if not argv:
+        print(json.dumps({
+            "ui": settings.ui_language(cfg),
+            "stt": (cfg.get("stt") or {}).get("language") or "zh",
+            "effective_ui": settings.effective_ui_language(cfg),
+        }, ensure_ascii=False))
+        return 0
+    value = argv[0].lower()
+    if value not in ("zh", "en", "auto"):
+        return _err("lang: expected zh|en|auto, got %r" % argv[0])
+    settings.save_user_config({"ui": {"language": value}, "stt": {"language": value}})
+    audit("lang set %s" % value)
     cmd_refresh_provider()
     return 0
 
@@ -965,6 +998,8 @@ def main(argv=None) -> int:
         return cmd_refresh_provider()
     if command == "config":
         return cmd_config(argv[1:])
+    if command == "lang":
+        return cmd_lang(argv[1:])
     if command == "models":
         return cmd_models(argv[1:])
     if command == "catalog":

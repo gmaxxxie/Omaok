@@ -75,6 +75,17 @@ def load_state() -> dict:
 
 def write_state(data: dict) -> dict:
     data["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    # Every state write carries the effective UI language so the QML popover /
+    # pet can render zh/en strings without probing config itself. The raw
+    # setting (zh|en|auto) is kept too so the picker shows the actual choice.
+    try:
+        from config import settings as _settings
+        _cfg = _settings.load_config()
+        data["ui_lang"] = _settings.effective_ui_language(_cfg)
+        data["ui_lang_setting"] = _settings.ui_language(_cfg)
+    except Exception:
+        data.setdefault("ui_lang", "zh")
+        data.setdefault("ui_lang_setting", "zh")
     path = state_path()
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".state.", suffix=".tmp")
     try:

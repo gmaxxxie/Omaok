@@ -13,7 +13,16 @@ explicit confirmation reach the executor.
 ## Highlights
 
 - **Local-first**: speech-to-text uses the locally installed
-  [Voxtype](https://voxtype.io) model (SenseVoice small-fp32 zh here); no cloud.
+  [Voxtype](https://voxtype.io) model (SenseVoice small-int8 here); no cloud.
+- **中文 / English 版本切换**: the popover has a **界面语言 / Language** picker
+  (中文 · English · Auto). One toggle flips the whole assistant:
+  - **STT** follows the picker (`stt.language` = zh / en / auto) so voice
+    recognition matches the spoken language;
+  - the **popover + pet UI** render in Chinese or English (Auto resolves to
+    the system locale);
+  - **chat / memory / persona replies** follow the picker (Auto auto-detects
+    per utterance, so bilingual users get the right language either way).
+  Same effect via CLI: `omarchy-voice-control lang zh|en|auto`.
 - **No text injection**: we record our own 16 kHz mono WAV and feed it to
   `voxtype transcribe`, which prints the transcript to stdout and never types
   into the focused app. The daemon's `record start/stop` path (which injects)
@@ -64,13 +73,14 @@ config/                # defaults + user overrides (aliases, STT, roots, pet)
 ui/VoiceControl.qml    # bar icon + popover (KeyboardPanel, FileView-driven)
 ui/PetOverlay.qml      # desktop-pet layer window (draggable 小飞马, state sprites)
 ui/pet/                # pet sprites (transparent PNGs) + phase mapping in QML
-tests/                 # unittest suite (77 tests)
+tests/                 # unittest suite (214 tests)
 ```
 
 ## User configuration
 
 Override defaults at `~/.config/omarchy/voice-control/`:
-- `config.json`  — STT engine/model/language, confirm policy, search roots, …
+- `config.json`  — STT engine/model/language, confirm policy, search roots,
+  `ui.language` (zh | en | auto), …
 - `aliases.json` — `apps` / `folders` / `files` aliases
 
 Runtime state/audio live in `$XDG_RUNTIME_DIR/omarchy-voice-control/`;

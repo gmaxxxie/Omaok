@@ -41,6 +41,50 @@ Panel {
   property string chatDeferText: ""
   property int focusIndex: 0
 
+  // ---- UI language (中英文切换) ----
+  property string lang: "zh"          // effective zh/en — drives every string below
+  property string langSetting: "zh"   // raw config choice: zh | en | auto
+  property var tr: ({})                // active translation table (reassigned on lang change)
+  readonly property var trZh: ({
+    close: "关闭", providerChecking: "语音识别：检查中…", providerReady: "语音识别就绪",
+    providerUnavailable: "语音识别不可用", sttModel: "语音模型", intentFramework: "意图框架",
+    intentModel: "意图模型", intentThinking: "意图思考", searchModels: "搜索模型…",
+    uiLanguage: "界面语言", petLabel: "小飞马助手", petDesc: "桌面宠物 · 点击开始/停止语音，可拖动",
+    resetPetPos: "重置宠物位置", convMode: "对话模式", convDesc: "免提 · 说完自动停，持续聆听",
+    convStatus: "对话模式状态", startListening: "开始聆听", stopListening: "停止聆听",
+    cancel: "取消", listeningDone: "聆听完成", gotIt: "好的", openAiTool: "打开AI工具",
+    transcript: "识别文本", answer: "回答", aiTool: "AI工具", action: "动作", actionAi: "动作 · AI",
+    risk: "风险", confirmRequired: "需要确认", lowRisk: "低风险", confirm: "确认", done: "完成",
+    voiceControl: "omaok — 语音控制", rec: "● REC", thinking: "…"
+  })
+  readonly property var trEn: ({
+    close: "Close", providerChecking: "STT provider: checking…", providerReady: "Voxtype ready",
+    providerUnavailable: "Voxtype unavailable", sttModel: "Voxtype model", intentFramework: "Intent framework",
+    intentModel: "Intent model", intentThinking: "Intent thinking", searchModels: "Search models…",
+    uiLanguage: "Language", petLabel: "Pegasus assistant", petDesc: "Desktop pet · click to start/stop voice, draggable",
+    resetPetPos: "Reset pet position", convMode: "Conversation mode", convDesc: "Hands-free · VAD auto-stop, keeps listening",
+    convStatus: "Conversation mode status", startListening: "Start listening", stopListening: "Stop listening",
+    cancel: "Cancel", listeningDone: "Listening done", gotIt: "Got it", openAiTool: "Open AI tool",
+    transcript: "Transcript", answer: "Answer", aiTool: "AI tool", action: "Action", actionAi: "Action · AI",
+    risk: "Risk", confirmRequired: "Confirmation required", lowRisk: "Low risk", confirm: "Confirm", done: "Done",
+    voiceControl: "omaok — voice control", rec: "● REC", thinking: "…"
+  })
+
+  function buildStrings() {
+    root.tr = root.lang === "en" ? root.trEn : root.trZh
+  }
+  onLangChanged: root.buildStrings()
+  Component.onCompleted: root.buildStrings()
+
+  function micText() {
+    if (root.recording) return root.tr.stopListening
+    if (root.working) return root.tr.cancel
+    if (root.awaiting) return root.tr.listeningDone
+    if (root.chatReply) return root.tr.gotIt
+    if (root.chatDefer) return root.tr.openAiTool
+    return root.tr.startListening
+  }
+
   // --- desktop pet (小飞马) ---
   property bool petVisible: true
   property bool chatmode: false
@@ -87,6 +131,8 @@ Panel {
     root.chatReplyText = root.scrub(o.chat_reply || "")
     root.chatDeferText = root.scrub(o.chat_defer || "")
     root.chatmode = o.chatmode === true
+    root.lang = String(o.ui_lang || "zh")
+    root.langSetting = String(o.ui_lang_setting || "zh")
     root.buildModelOptions()
   }
 
@@ -166,7 +212,7 @@ Panel {
     bar: root.bar
     text: "\uF036C"                       // Nerd Font microphone (verified in bar font)
     active: root.recording                // red/tinted while listening
-    tooltipText: "omaok — voice control"
+    tooltipText: root.tr.voiceControl
     onPressed: function (b) {
       if (b === Qt.LeftButton) root.toggle()
     }
@@ -237,7 +283,7 @@ Panel {
               height: Style.space(30)
               size: Style.space(30)
               iconText: "\u00D7"
-              tooltipText: "Close"
+              tooltipText: root.tr.close
               foreground: root.fg
               hoverColor: root.fg
               anchors.right: parent.right
@@ -257,10 +303,27 @@ Panel {
             textFormat: Text.PlainText
           }
 
+          // ---- Language switch (中英文切换) ----
+          Dropdown {
+            id: langPicker
+            label: root.tr.uiLanguage
+            width: parent.width
+            value: root.langSetting
+            options: [
+              { value: "zh", label: "中文" },
+              { value: "en", label: "English" },
+              { value: "auto", label: "Auto · 自动" }
+            ]
+            foreground: root.fg
+            accent: Color.accent
+            fontFamily: root.barFont
+            onChanged: function (v) { root.cmd("lang " + v) }
+          }
+
           // ---- STT model picker ----
           Dropdown {
             id: sttModelPicker
-            label: "Voxtype model"
+            label: root.tr.sttModel
             width: parent.width
             value: root.provider && root.provider.stt_engine ? (root.provider.stt_engine + "/" + root.provider.stt_model) : ""
             options: root.sttModelOptions
@@ -273,7 +336,7 @@ Panel {
           // ---- AI intent framework + model + thinking ----
           Dropdown {
             id: aiBackendPicker
-            label: "Intent framework"
+            label: root.tr.intentFramework
             width: parent.width
             value: root.provider && root.provider.ai ? (root.provider.ai.backend || "pi-rpc") : "pi-rpc"
             options: [
@@ -293,9 +356,9 @@ Panel {
           }
           SearchableDropdown {
             id: aiModelPicker
-            label: "Intent model"
+            label: root.tr.intentModel
             width: parent.width
-            placeholderText: "Search models…"
+            placeholderText: root.tr.searchModels
             value: root.provider && root.provider.ai ? (root.provider.ai.model || "default") : ""
             options: root.aiModelOptions
             foreground: root.fg
@@ -305,7 +368,7 @@ Panel {
           }
           Dropdown {
             id: aiThinkingPicker
-            label: "Intent thinking"
+            label: root.tr.intentThinking
             width: parent.width
             value: root.provider && root.provider.ai ? root.provider.ai.thinking : "off"
             options: ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
@@ -326,8 +389,8 @@ Panel {
             Toggle {
               id: petToggle
               width: parent.width - Style.space(8) - Style.space(42)
-              label: "Pegasus assistant"
-              description: "Desktop pet · click to start/stop voice, draggable"
+              label: root.tr.petLabel
+              description: root.tr.petDesc
               checked: root.petVisible
               foreground: root.fg
               accent: Color.accent
@@ -342,7 +405,7 @@ Panel {
               height: Style.space(34)
               size: Style.space(18)
               iconText: "\uF01E"
-              tooltipText: "Reset pet position"
+              tooltipText: root.tr.resetPetPos
               foreground: root.fg
               hoverColor: root.fg
               anchors.verticalCenter: petToggle.verticalCenter
@@ -360,8 +423,8 @@ Panel {
             spacing: Style.space(8)
             Toggle {
               width: parent.width - Style.space(8) - Style.space(42)
-              label: "Conversation mode"
-              description: "Hands-free · VAD auto-stop, keeps listening"
+              label: root.tr.convMode
+              description: root.tr.convDesc
               checked: root.chatmode
               foreground: root.fg
               accent: Color.accent
@@ -376,7 +439,7 @@ Panel {
               height: Style.space(34)
               size: Style.space(18)
               iconText: "\uF8A9"
-              tooltipText: "Conversation mode status"
+              tooltipText: root.tr.convStatus
               foreground: root.fg
               hoverColor: root.fg
               anchors.verticalCenter: parent.verticalCenter
@@ -396,12 +459,7 @@ Panel {
             focusable: true
             selected: root.recording || root.working
             iconText: "\uF036C"
-            text: root.recording ? "Stop listening"
-                : root.working ? "Cancel"
-                : root.awaiting ? "Listening done"
-                : root.chatReply ? "Got it"
-                : root.chatDefer ? "Open AI tool"
-                : "Start listening"
+            text: root.micText()
             iconSize: Style.font.icon
             foreground: (root.recording || root.working) ? Color.accent : root.fg
             accent: Color.accent
@@ -416,7 +474,7 @@ Panel {
               anchors.fill: parent
               horizontalAlignment: Text.AlignHCenter
               verticalAlignment: Text.AlignVCenter
-              text: root.recording ? "● REC" : (root.working ? "…" : "")
+              text: root.recording ? root.tr.rec : (root.working ? root.tr.thinking : "")
               color: root.recording ? Color.accent : "transparent"
               font.family: root.barFont
               font.pixelSize: Style.font.caption
@@ -428,7 +486,7 @@ Panel {
           // ---- Transcript ----
           Text {
             width: parent.width
-            text: "Transcript"
+            text: root.tr.transcript
             color: root.dim
             font.family: root.barFont
             font.pixelSize: Style.font.caption
@@ -453,7 +511,7 @@ Panel {
             implicitHeight: Math.max(chatLabel.implicitHeight, chatValue.implicitHeight)
             Text {
               id: chatLabel
-              text: root.chatDefer ? "AI tool" : "Answer"
+              text: root.chatDefer ? root.tr.aiTool : root.tr.answer
               color: root.dim
               font.family: root.barFont
               font.pixelSize: Style.font.caption
@@ -483,7 +541,7 @@ Panel {
             spacing: Style.space(8)
             Button {
               focusable: true
-              text: "Open AI tool"
+              text: root.tr.openAiTool
               iconText: "\uF08E"
               foreground: root.fg
               accent: Color.accent
@@ -493,7 +551,7 @@ Panel {
             }
             Button {
               focusable: true
-              text: "Cancel"
+              text: root.tr.cancel
               foreground: root.fg
               height: Style.space(34)
               width: (parent.width - Style.space(8)) * 0.4
@@ -508,7 +566,7 @@ Panel {
             implicitHeight: Math.max(actionLabel.implicitHeight, actionValue.implicitHeight)
             Text {
               id: actionLabel
-              text: root.action && root.action.source === "future_llm" ? "Action \u00B7 AI" : "Action"
+              text: root.action && root.action.source === "future_llm" ? root.tr.actionAi : root.tr.action
               color: root.dim
               font.family: root.barFont
               font.pixelSize: Style.font.caption
@@ -541,7 +599,7 @@ Panel {
             implicitHeight: Math.max(riskLabel.implicitHeight, riskValue.implicitHeight)
             Text {
               id: riskLabel
-              text: "Risk"
+              text: root.tr.risk
               color: root.dim
               font.family: root.barFont
               font.pixelSize: Style.font.caption
@@ -553,7 +611,7 @@ Panel {
             }
             Text {
               id: riskValue
-              text: root.action && root.action.risk === "confirm_required" ? "Confirmation required" : "Low risk"
+              text: root.action && root.action.risk === "confirm_required" ? root.tr.confirmRequired : root.tr.lowRisk
               color: root.action && root.action.risk === "confirm_required" ? Color.accent : root.fg
               font.family: root.barFont
               font.pixelSize: Style.font.body
@@ -571,7 +629,7 @@ Panel {
             Button {
               id: confirmBtn
               focusable: true
-              text: "Confirm"
+              text: root.tr.confirm
               iconText: "\uF00C"
               foreground: root.fg
               accent: Color.accent
@@ -582,7 +640,7 @@ Panel {
             Button {
               id: cancelBtn
               focusable: true
-              text: "Cancel"
+              text: root.tr.cancel
               foreground: root.fg
               height: Style.space(38)
               width: (parent.width - Style.space(8)) * 0.4
@@ -624,7 +682,7 @@ Panel {
           Button {
             visible: root.result !== null
             focusable: true
-            text: "Done"
+            text: root.tr.done
             height: Style.space(34)
             width: parent.width
             foreground: root.fg
@@ -642,14 +700,15 @@ Panel {
   }
 
   function providerText() {
-    if (!root.provider) return "STT provider: checking…"
+    if (!root.provider) return root.tr.providerChecking
     if (root.provider.available) {
       var parts = []
       if (root.provider.engine && root.provider.engine !== "auto") parts.push(root.provider.engine)
       if (root.provider.model) parts.push(root.provider.model)
-      return "Voxtype ready" + (parts.length ? " · " + parts.join("/") : "")
+      if (root.provider.stt_language) parts.push(root.provider.stt_language)
+      return root.tr.providerReady + (parts.length ? " · " + parts.join("/") : "")
     }
-    return "Voxtype unavailable" + (root.provider.message ? ": " + root.scrub(root.provider.message) : "")
+    return root.tr.providerUnavailable + (root.provider.message ? ": " + root.scrub(root.provider.message) : "")
   }
 
   // Model picker option arrays, rebuilt on every state parse so they stay in
@@ -681,6 +740,7 @@ Panel {
 
   function moveFocus(dir) {
     var list = []
+    if (langPicker.enabled) list.push(langPicker)
     if (sttModelPicker.enabled) list.push(sttModelPicker)
     if (aiBackendPicker.enabled) list.push(aiBackendPicker)
     if (aiModelPicker.enabled) list.push(aiModelPicker)

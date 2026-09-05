@@ -51,7 +51,41 @@ DEFAULT_CONFIG = {
         "target": "save",
     },
     "workspaces": {"min": 1, "max": 10},
+    "ui": {
+        "language": "zh",  # "zh" | "en" | "auto" — UI + STT + replies language switch
+    },
 }
+
+def ui_language(cfg: dict | None = None) -> str:
+    """Raw ui.language setting: 'zh' | 'en' | 'auto' (default 'zh').
+    The user-facing switch (CLI `lang`) keeps this and stt.language in sync."""
+    lang = ((cfg or {}) or {}).get("ui", {}).get("language") or "zh"
+    return lang if lang in ("zh", "en", "auto") else "zh"
+
+
+def effective_ui_language(cfg: dict | None = None) -> str:
+    """Concrete UI language for static strings: 'zh' | 'en'.
+    'auto' resolves via the system locale (zh_* -> zh, otherwise en)."""
+    lang = ui_language(cfg)
+    if lang in ("zh", "en"):
+        return lang
+    return _locale_ui_language()
+
+
+def _locale_ui_language() -> str:
+    """System-locale based fallback for ui.language=auto."""
+    try:
+        import locale
+        code, _ = locale.getlocale(locale.LC_CTYPE) or ("", "")
+        if code and code.lower().startswith("zh"):
+            return "zh"
+    except Exception:
+        pass
+    for var in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        if (os.environ.get(var) or "").lower().startswith("zh"):
+            return "zh"
+    return "en"
+
 
 DEFAULT_ALIASES = {
     "apps": {},
