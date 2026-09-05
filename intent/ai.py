@@ -884,8 +884,10 @@ def _chat_prompt(transcript: str, context: dict | None = None) -> str:
         '{{"kind": "answer"|"defer"|"none", "reply": "<short text>"}}\n\n'
         "- kind=answer: answer in 1-2 short sentences. reply = that answer, plain "
         "text, under 120 chars, in the user's language.\n"
-        "- kind=defer: the question is complex, open-ended, needs deep research/"
-        "discussion, or you are not confident — reply = a short prompt (max 40 "
+        "- kind=defer: ONLY when the topic genuinely needs up-to-date web info, deep "
+        "research, or a tool (e.g. current news, statistics, complex document "
+        "writing). Do NOT defer casual conversation follow-ups or questions you "
+        "can answer reasonably — answer those. reply = a short prompt (max 40 "
         "chars, in the user's language) to hand off to a full AI tool.\n"
         "- kind=none: the input is just noise, a greeting, or has no meaning — "
         "reply = \"\"."
