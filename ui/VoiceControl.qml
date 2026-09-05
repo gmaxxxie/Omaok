@@ -43,6 +43,7 @@ Panel {
 
   // --- desktop pet (小飞马) ---
   property bool petVisible: true
+  property bool chatmode: false
 
   readonly property bool recording: root.phase === "recording"
   readonly property bool awaiting: root.phase === "awaiting_confirm"
@@ -85,6 +86,7 @@ Panel {
     root.action = o.action || null
     root.chatReplyText = root.scrub(o.chat_reply || "")
     root.chatDeferText = root.scrub(o.chat_defer || "")
+    root.chatmode = o.chatmode === true
     root.buildModelOptions()
   }
 
@@ -349,6 +351,36 @@ Panel {
                 root.petVisible = true
                 root.cmd("pet show")
               }
+            }
+          }
+
+          // ---- Conversation mode (免提对话) ----
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+            Toggle {
+              width: parent.width - Style.space(8) - Style.space(42)
+              label: "Conversation mode"
+              description: "Hands-free · VAD auto-stop, keeps listening"
+              checked: root.chatmode
+              foreground: root.fg
+              accent: Color.accent
+              fontFamily: root.barFont
+              onClicked: {
+                root.chatmode = !root.chatmode
+                root.cmd("chatmode " + (root.chatmode ? "on" : "off"))
+              }
+            }
+            PanelActionButton {
+              width: Style.space(34)
+              height: Style.space(34)
+              size: Style.space(18)
+              iconText: "\uF8A9"
+              tooltipText: "Conversation mode status"
+              foreground: root.fg
+              hoverColor: root.fg
+              anchors.verticalCenter: parent.verticalCenter
+              onClicked: root.cmd("chatmode status")
             }
           }
 

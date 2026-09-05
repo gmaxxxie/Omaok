@@ -320,6 +320,10 @@ _END_RE = re.compile(
     r"结束对话|退出对话|结束聊天|不聊了|先聊到这|聊完了|再见|拜拜|今天就到这|到此为止"
     r"|end (?:the )?conversation|stop chatting|exit chat|bye for now|that's all for now",
     re.I)
+_CHATMODE_ON_RE = re.compile(
+    r"开始对话|进入对话模式|开启对话|开启对话模式|开始聊天|免提对话", re.I)
+_CHATMODE_OFF_RE = re.compile(
+    r"退出对话模式|关闭对话模式|停止对话模式|退出对话|免提关闭|关掉对话模式", re.I)
 
 # Natural closing remarks that wrap up a conversation (offline, conservative:
 # FULL-match on a short utterance only, so a politeness prefix in a real
@@ -360,6 +364,10 @@ def explicit_command(text: str):
     if m:
         arg = next((g for g in m.groups() if g and g.strip()), None)
         return ("forget", (arg or "").strip())
+    if _CHATMODE_ON_RE.search(t):
+        return ("chatmode_on", "")
+    if _CHATMODE_OFF_RE.search(t):
+        return ("chatmode_off", "")
     if _RECALL_RE.search(t):
         return ("recall", "")
     if _END_RE.search(t):

@@ -47,7 +47,7 @@ from executor import actions as executor  # noqa: E402
 from intent import rules as intent_rules  # noqa: E402
 from intent import ai as intent_ai  # noqa: E402
 from policy import policy  # noqa: E402
-from recorder import Recorder, raw_duration_seconds  # noqa: E402
+from recorder import AutoRecorder, Recorder, _read_pid, raw_duration_seconds  # noqa: E402
 from resolver import lookup as resolver  # noqa: E402
 from state import (  # noqa: E402
     audit,
@@ -172,6 +172,9 @@ def _process_transcript(st: dict, cfg: dict, aliases: dict) -> None:
             st["error"] = ""
             write_state(st)
             audit("chat reply (%s): %r" % (result.get("via", "chat"), result["reply"]))
+            # A conversation-mode directive (chatmode on/off) from the chat layer.
+            if result.get("mode"):
+                cmd_chatmode([result["mode"]])
             return
         elif result.get("kind") == "none":
             # noise / greeting — stay idle quietly, no error, no state churn.
@@ -411,6 +414,177 @@ def cmd_record_cancel() -> int:
     st["chat_defer"] = ""
     write_state(st)
     audit("record cancel (audio discarded)")
+    return 0
+
+
+def _make_auto_recorder(cfg: dict) -> AutoRecorder:
+    rec = cfg.get("recorder") or {}
+    return AutoRecorder(rec.get("device", "default"), float(rec.get("max_seconds", 30)))
+
+
+def cmd_record_auto() -> int:
+    """VAD turn: listen until speech + trailing silence (or max_seconds), then
+    run the normal transcribe->parse->reply. Drives the hands-free conversation
+    mode (chatmode). No-ops when chatmode is off or already listening."""
+    cfg, aliases = _load()
+    st = load_state()
+    if not st.get("chatmode"):
+        return 0
+    if st.get("phase") == "recording":
+        return 0
+    recorder = _make_auto_recorder(cfg)
+    try:
+        recorder.start()
+    except Exception as exc:
+        st["phase"] = "result"
+        st["error"] = "could not start recording: %s" % exc
+        st["result"] = {"ok": False, "message": str(exc)}
+        write_state(st)
+        return 1
+    st["phase"] = "recording"
+    st["transcript"] = ""
+    st["action"] = None
+    st["target_desc"] = ""
+    st["error"] = ""
+    st["result"] = None
+    st["chat_reply"] = ""
+    st["chat_defer"] = ""
+    write_state(st)
+    audit("record auto (VAD)")
+    _spawn_record_watchdog(recorder.pid)
+    natural = recorder.wait_natural_end(float(cfg.get("recorder", {}).get("max_seconds", 30)))
+    if natural:
+        with _state_lock():
+            st = load_state()
+            if st.get("phase") == "recording" and _read_pid() == recorder.pid:
+                recorder.stop()  # terminate pw-record + wrap WAV
+                return _finalize_recording(cfg, aliases)
+    return 0  # manual stop/cancel killed pw-record; that process finalized
+
+
+def _chatmode_pid_path() -> str:
+    return os.path.join(settings.USER_CONFIG_DIR, "chatmode.pid")
+
+
+def _chatmode_daemon_pids() -> list[int]:
+    try:
+        with open(_chatmode_pid_path(), encoding="utf-8") as fh:
+            return [int(fh.read().strip())]
+    except (OSError, ValueError):
+        return []
+
+
+def _chatmode_kill_daemon() -> None:
+    import signal
+    for pid in _chatmode_daemon_pids():
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+    try:
+        os.unlink(_chatmode_pid_path())
+    except OSError:
+        pass
+
+
+def _chatmode_set(state: bool) -> None:
+    st = load_state()
+    st["chatmode"] = bool(state)
+    write_state(st)
+    audit("chatmode %s" % ("on" if state else "off"))
+
+
+def _chatmode_enabled() -> bool:
+    return bool(load_state().get("chatmode"))
+
+
+def cmd_chatmode(argv: list) -> int:
+    """Conversation mode: `chatmode on|off|status|daemon`.
+    on  -> set chatmode + start a fresh conversation + spawn the hands-free daemon
+    off -> stop listening, kill the daemon, clear chatmode
+    daemon -> the detached loop that chains VAD turns until the conversation ends"""
+    if not argv:
+        return _err("usage: chatmode on|off|status|daemon")
+    action = argv[0]
+
+    if action == "status":
+        enabled = _chatmode_enabled()
+        pids = _chatmode_daemon_pids()
+        print(json.dumps({"enabled": enabled, "daemon": pids}, ensure_ascii=False))
+        return 0
+
+    if action == "off":
+        _chatmode_kill_daemon()
+        _make_recorder(_load()[0]).cancel()  # stop any active VAD listen
+        _chatmode_set(False)
+        return 0
+
+    if action == "on":
+        if _chatmode_enabled() and _chatmode_daemon_pids():
+            return 0  # already on
+        _chatmode_set(True)
+        from config import chatmem
+        chatmem.start_session()
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, os.path.abspath(__file__), "chatmode", "daemon"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            os.makedirs(os.path.dirname(_chatmode_pid_path()), exist_ok=True)
+            with open(_chatmode_pid_path(), "w", encoding="utf-8") as fh:
+                fh.write(str(proc.pid))
+        except Exception:
+            pass
+        return 0
+
+    if action == "daemon":
+        return _chatmode_daemon_loop(_load())
+
+    return _err("chatmode: unknown action %r" % action)
+
+
+def _chatmode_daemon_loop(loaded) -> int:
+    """Hands-free conversation loop: listen (VAD) -> turn completes -> breathing
+    gap -> listen again. Ends when chatmode is turned off, the conversation
+    wrapped up (session inactive), or the user went quiet for 2 listen cycles."""
+    cfg, aliases = loaded
+    quiet = 0
+    try:
+        while _chatmode_enabled():
+            st = load_state()
+            phase = st.get("phase")
+            if phase in ("recording", "transcribing", "executing", "awaiting_confirm"):
+                time.sleep(0.5)
+                continue
+            if phase in ("chat_reply", "chat_defer", "result"):
+                # A turn just finished: check whether the conversation ended.
+                try:
+                    from config import chatmem as _cm
+                    if not _cm.load_session().get("active", True):
+                        break  # wrapped up -> leave chatmode
+                except Exception:
+                    pass
+                time.sleep(1.0)  # breathing gap before re-arming the mic
+            elif phase != "idle":
+                time.sleep(0.5)
+                continue
+            # One hands-free turn (blocks until it completes).
+            subprocess.call(
+                [sys.executable, os.path.abspath(__file__), "record", "auto"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if load_state().get("phase") == "idle":
+                quiet += 1
+                if quiet >= 2:
+                    break  # user went quiet — stop the mode
+            else:
+                quiet = 0
+    finally:
+        if _chatmode_enabled():
+            _chatmode_set(False)
+        _chatmode_kill_daemon()
     return 0
 
 
@@ -732,6 +906,8 @@ def main(argv=None) -> int:
             return cmd_record_cancel()
         if argv[1] == "finalize":
             return cmd_record_finalize()
+        if argv[1] == "auto":
+            return cmd_record_auto()
         return _err("record: unknown subcommand %r" % argv[1])
     if command == "confirm":
         return cmd_confirm()
@@ -755,6 +931,8 @@ def main(argv=None) -> int:
         return cmd_check()
     if command == "pet":
         return cmd_pet(argv[1:])
+    if command == "chatmode":
+        return cmd_chatmode(argv[1:])
     if command == "test" and len(argv) > 2 and argv[1] == "transcribe":
         return cmd_test_transcribe(argv[2])
     if command in ("help", "--help", "-h"):

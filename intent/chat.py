@@ -97,6 +97,11 @@ def _handle_explicit(cmd, cfg):
     if kind == "end":
         chatmem.park()  # stash turns for lazy consolidation at next chat
         return {"kind": "answer", "reply": "好，先聊到这儿～ 想我的时候随时叫我。", "via": "memory"}
+    if kind == "chatmode_on":
+        return {"kind": "answer", "reply": "好，对话模式已开启～ 说完话停一下就行，想退出就说“结束对话”。",
+                "via": "memory", "mode": "on"}
+    if kind == "chatmode_off":
+        return {"kind": "answer", "reply": "好，已退出对话模式。", "via": "memory", "mode": "off"}
     return None
 
 

@@ -87,7 +87,6 @@ class Recorder:
         self._fh = None
         self._device = device
         self._max_seconds = max_seconds
-
     def start(self) -> None:
         # Never leave a previous recorder running (e.g. from a crashed CLI).
         self._kill_existing()
@@ -181,6 +180,97 @@ def raw_duration_seconds() -> float:
         return size / 2.0 / 16000.0
     except OSError:
         return 0.0
+
+
+class EnergyVAD:
+    """Zero-dependency energy-based voice activity detection (16 kHz mono s16).
+
+    States: wait (no speech yet — never auto-stops) -> speech -> done (after
+    `silence_ms` of trailing quiet). The noise floor adapts live so the
+    threshold tracks the room.
+    """
+
+    FRAME = 320  # 20 ms at 16 kHz s16
+
+    def __init__(self, silence_ms: int = 1200, threshold_factor: float = 4.0,
+                 floor: float = 300.0):
+        self.silence_frames = max(1, silence_ms // 20)
+        self.factor = threshold_factor
+        self.floor = float(floor)
+        self.noise: float | None = None
+        self.state = "wait"
+        self.trail = 0
+
+    def feed(self, data: bytes) -> None:
+        if not data or self.state == "done":
+            return
+        try:
+            import array
+            samples = array.array("h", data)
+        except Exception:
+            return
+        if not samples:
+            return
+        rms = (sum(s * s for s in samples) / len(samples)) ** 0.5
+        if self.noise is None:
+            self.noise = rms
+        else:
+            self.noise = self.noise * 0.98 + rms * 0.02
+        voiced = rms > max(self.noise * self.factor, self.floor)
+        if self.state == "wait":
+            if voiced:
+                self.state = "speech"
+        elif self.state == "speech":
+            if voiced:
+                self.trail = 0
+            else:
+                self.trail += 1
+                if self.trail >= self.silence_frames:
+                    self.state = "done"
+
+    @property
+    def done(self) -> bool:
+        return self.state == "done"
+
+
+class AutoRecorder(Recorder):
+    """VAD-driven recorder: pw-record streams raw PCM to a pipe, frames are
+    appended to raw_path live while EnergyVAD watches for speech + trailing
+    silence. Manual stop/cancel still work (they kill pw-record by pid; the
+    pipe EOF is treated as a manual stop, so the caller's watchdog finalizes).
+    """
+
+    def start(self) -> None:
+        self._kill_existing()
+        self._vad = EnergyVAD()
+        self._fh = open(raw_path(), "wb")
+        self._proc = subprocess.Popen(
+            [
+                "pw-record", "--rate", "16000",
+                "--channels", "1", "--format", "s16", "-",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        _write_pid(self._proc.pid)
+
+    def wait_natural_end(self, max_seconds: float = 30.0) -> bool:
+        """Block until trailing silence after speech (or max_seconds), appending
+        frames to raw_path. Returns True on a natural end, False when pw-record
+        died first (manual stop/cancel — the caller's watchdog finalizes)."""
+        start = time.monotonic()
+        while True:
+            data = self._proc.stdout.read(EnergyVAD.FRAME * 2)
+            if not data:
+                return False
+            self._fh.write(data)
+            self._vad.feed(data)
+            if self._vad.done or time.monotonic() - start > max_seconds:
+                return True
+
+    def detected_speech(self) -> bool:
+        return bool(self._vad and self._vad.state in ("speech", "done"))
 
 
 def wrap_raw_to_wav(max_seconds: float = 30.0) -> int:

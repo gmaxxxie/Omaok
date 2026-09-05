@@ -55,6 +55,7 @@ DEFAULT_STATE = {
     "provider": None,
     "chat_reply": "",    # short answer shown in the pet bubble (phase chat_reply)
     "chat_defer": "",    # complex-topic handoff text (phase chat_defer)
+    "chatmode": False,    # hands-free conversation mode (VAD auto-turn loop)
     "updated_at": "",
 }
 

@@ -44,6 +44,12 @@ Item {
   property var result: null
   property string chatReplyText: ""
   property string chatDeferText: ""
+  property bool chatmode: false
+
+  // Typewriter reveal for chat replies (streaming feel): pi RPC delivers the
+  // full reply at once (no token deltas), so the bubble types it out instead.
+  // Zero extra latency — the text is already here, only the display animates.
+  property string displayedReply: ""
 
   // ---- pet geometry, driven by pet.json ----
   property bool petVisible: true
@@ -63,7 +69,7 @@ Item {
   readonly property bool chatPhase: root.chatReply || root.chatDefer
   readonly property bool errorPhase: root.phase === "idle" && root.error !== ""
   readonly property bool cancellable: root.recording || root.working || root.awaiting || root.chatPhase
-  readonly property bool bubbleShown: root.phase !== "idle" || root.errorPhase || root.hovered
+  readonly property bool bubbleShown: root.phase !== "idle" || root.errorPhase || root.hovered || root.chatmode
   readonly property int bubbleTextW:
     root.awaiting || root.showResult || root.errorPhase || root.chatPhase ? 212 : 160
   readonly property int petSize: Math.max(48, Math.round(100 * root.petScale))
@@ -122,6 +128,7 @@ Item {
     root.result = o.result || null
     root.chatReplyText = root.scrub(o.chat_reply || "")
     root.chatDeferText = root.scrub(o.chat_defer || "")
+    root.chatmode = o.chatmode === true
   }
 
   function parsePet() {
@@ -251,7 +258,7 @@ Item {
 
   function bubbleText() {
     if (root.errorPhase) return "⚠ " + (root.error || "Something went wrong")
-    if (root.chatReply) return root.chatReplyText || "—"
+    if (root.chatReply) return root.displayedReply || "—"
     if (root.chatDefer) return root.chatDeferText + "\nOpen AI tool?"
     // (chat_defer shows an Open/Cancel button row below, see actionRow)
     if (root.phase === "recording") return "Listening…\ntap again to finish · right-click to cancel"
@@ -265,12 +272,13 @@ Item {
       var ok = root.result && root.result.ok
       return (ok ? "\u2713 " : "\u2717 ") + (root.result ? root.result.message : "")
     }
-    return root.hovered ? "Click to talk" : "" // idle: only on hover
+    return root.hovered ? "Click to talk" : (root.chatmode ? "对话模式 · 点我退出" : "") // idle: hover hint or chatmode indicator
   }
 
   // ---- click semantics (identical to the popover's activate()) ----
 
   function activate() {
+    if (root.chatmode) { root.cmdCli(["chatmode", "off"]); return }   // clicking exits hands-free mode
     if (root.awaiting) { root.cmdCli(["confirm"]); return }
     if (root.recording) { root.cmdCli(["record", "stop"]); return }
     if (root.working) { return }
@@ -292,6 +300,34 @@ Item {
 
   // Snap the bob animation back to rest before a drag, then persist on release.
   onDraggingChanged: if (root.dragging) spriteFloat.y = 0
+
+  // ---- typewriter reveal for chat replies ----
+
+  Timer {
+    id: replyReveal
+    interval: 26
+    repeat: true
+    // running: true is required for a Timer that must fire (repeat alone doesn't
+    // start it in Qt Quick).
+    running: root.phase === "chat_reply"
+      && root.displayedReply.length < root.chatReplyText.length
+    onTriggered: {
+      var step = Math.max(1, Math.ceil(root.chatReplyText.length / 40))
+      root.displayedReply = root.chatReplyText.substring(0,
+        Math.min(root.chatReplyText.length, root.displayedReply.length + step))
+    }
+  }
+
+  onChatReplyTextChanged: {
+    // A new reply arrives: start typing it out (reset the reveal).
+    if (root.phase === "chat_reply" && root.chatReplyText !== "") root.displayedReply = ""
+    else root.displayedReply = root.chatReplyText
+  }
+  onPhaseChanged: {
+    // Leaving chat_reply: show the full text at once (safety, no half-typed
+    // text lingering when the bubble hides or the reply is dismissed).
+    if (root.phase !== "chat_reply") root.displayedReply = root.chatReplyText
+  }
 
   // ================= overlay window =================
 
