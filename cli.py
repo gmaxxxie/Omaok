@@ -134,6 +134,42 @@ def _process_transcript(st: dict, cfg: dict, aliases: dict) -> None:
                 source = str(cached.get("source") or "rule")
                 audit("memory hit: %r -> %s" % (text, action["type"]))
 
+    # L2.5) Offline chat precheck — persona / explicit memory commands / closing
+    #       remarks / local facts (time, date, weekday, battery). Runs BEFORE the
+    #       AI intent layer so these answer instantly with zero model cost (they
+    #       used to spend an AI intent call first, then another in the chat layer).
+    _chattext = intent_rules.normalize(text)
+    if action is None and len(_chattext) >= 2 and (cfg.get("chat") or {}).get("enabled", True):
+        from intent import chat as chat_layer
+        pre = chat_layer.precheck(text, cfg)
+        if pre is not None:
+            if pre.get("kind") == "defer" and pre.get("reply"):
+                st["phase"] = "chat_defer"
+                st["chat_defer"] = pre["reply"]
+                st["chat_reply"] = ""
+                st["error"] = ""
+                write_state(st)
+                audit("chat defer: %r" % pre["reply"])
+                return
+            elif pre.get("kind") == "answer" and pre.get("reply"):
+                st["phase"] = "chat_reply"
+                st["chat_reply"] = pre["reply"]
+                st["chat_defer"] = ""
+                st["error"] = ""
+                write_state(st)
+                audit("chat reply (%s): %r" % (pre.get("via", "chat"), pre["reply"]))
+                if pre.get("mode"):
+                    cmd_chatmode([pre["mode"]])
+                return
+            elif pre.get("kind") == "none":
+                st["phase"] = "idle"
+                st["chat_reply"] = ""
+                st["chat_defer"] = ""
+                st["error"] = ""
+                write_state(st)
+                audit("chat none (ignored)")
+                return
+
     # L3) AI-intent commands: novel phrasing the rules don't cover.
     if action is None:
         ai_draft = intent_ai.analyze(text, cfg)
@@ -146,8 +182,8 @@ def _process_transcript(st: dict, cfg: dict, aliases: dict) -> None:
     #        defers complex/open topics to the AI tool (chat_defer) — the LAST
     #        resort. Skip when the transcript is too short to be meaningful
     #        (pure noise / punctuation from a poor capture) — don't burn a
-    #        model call on it.
-    _chattext = intent_rules.normalize(text)
+    #        model call on it. (precheck already handled persona/memory/closing/
+    #        time/date/battery before L3, so process()'s offline steps are no-ops.)
     if action is None and len(_chattext) >= 2 and (cfg.get("chat") or {}).get("enabled", True):
         # L4: long conversation + short/long-term memory. The chat layer handles
         # persona offline answers, explicit memory commands (remember/forget/

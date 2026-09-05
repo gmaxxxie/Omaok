@@ -14,11 +14,142 @@ Returns {"kind", "reply", "via"} for the CLI to map to chat_reply / chat_defer.
 
 from __future__ import annotations
 
+import re
+import subprocess
+from datetime import datetime
+
 from config import chatmem
 from config import character as character_mod
 from intent import ai as intent_ai
 
 CLOSING_REPLY = "不客气～有事随时叫我。"
+
+
+# ---------------------------------------------------------------------------
+# Offline local-facts answers (time / date / weekday / battery).
+# These are deterministic, zero-model, ~instant — the pet answers from the
+# machine itself, so "现在几点 / 今天几号 / 电量多少" never touch the AI layer.
+# ---------------------------------------------------------------------------
+
+_LOCAL_FACT_PATTERNS = [
+    # (regex, kind) — checked in order; weekday before date before time.
+    (re.compile(r"今天星期几|今天是星期几|今天周几|今天是周几|今天礼拜几|星期几|周几|礼拜几"
+                r"|what day is (?:it|today)|what day of the week", re.I), "weekday"),
+    (re.compile(r"今天几号|今天是几号|今天几月几日|今天日期|现在几号|几月几日"
+                r"|today'?s date|what('| i)s the date|what date(?: is today)?", re.I), "date"),
+    (re.compile(r"现在几点(?:钟|了|啦)?|现在什么时间|现在时间|几点钟了|几点了|几点啦|几点钟"
+                r"|what time is it|current time|what('| i)s the time", re.I), "time"),
+    (re.compile(r"电量多少|电量还有多少|电量还剩|电量是多少|现在电量|还有多少电|还有电吗"
+                r"|电池(?:还有|剩|多少|快没电|还有多少)|快没电了吗|电量"
+                r"|battery(?: level| left| percent| percentage)?|how much battery|charge(?: left)?", re.I), "battery"),
+]
+
+_WEEKDAYS_ZH = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+_WEEKDAYS_EN = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+def _has_cjk(text: str) -> bool:
+    return re.search(r"[\u4e00-\u9fff]", text) is not None
+
+
+def _zh_period(hour: int) -> str:
+    if hour < 5:
+        return "凌晨"
+    if hour < 9:
+        return "早上"
+    if hour < 12:
+        return "上午"
+    if hour < 14:
+        return "中午"
+    if hour < 18:
+        return "下午"
+    return "晚上"
+
+
+def local_fact_answer(text: str) -> tuple | None:
+    """Return (reply, kind) for an offline local-fact question, or None."""
+    if not text or not text.strip():
+        return None
+    t = re.sub(r"[，。！？、；：“”‘’《》【】（）…·!?.,;:()\[\]\"'<>{}|/\\]", " ", text)
+    t = re.sub(r"\s+", " ", t).strip()
+    if not t:
+        return None
+    zh = _has_cjk(text)
+    now = datetime.now()
+    for rx, kind in _LOCAL_FACT_PATTERNS:
+        if not rx.search(t):
+            continue
+        if kind == "weekday":
+            wd = now.weekday()
+            return (("今天是%s。" % _WEEKDAYS_ZH[wd]) if zh else
+                    ("It's %s." % _WEEKDAYS_EN[wd])), "local"
+        if kind == "date":
+            if zh:
+                return ("今天是%d年%d月%d日。" % (now.year, now.month, now.day)), "local"
+            return ("Today is %s %d, %d." % (now.strftime("%B"), now.day, now.year)), "local"
+        if kind == "time":
+            if zh:
+                return ("现在是%s%d点%d分。" % (_zh_period(now.hour), now.hour % 12 or 12, now.minute)), "local"
+            return ("It's %s." % now.strftime("%I:%M %p").lstrip("0")), "local"
+        if kind == "battery":
+            loc = _battery_reply(zh)
+            if loc:
+                return loc
+            # battery command unavailable -> let the model path handle it
+            return None
+    return None
+
+
+def _battery_reply(zh: bool) -> tuple | None:
+    """Local battery percentage via `omarchy battery status` (conventional)."""
+    try:
+        proc = subprocess.run(["omarchy", "battery", "status"], capture_output=True,
+                              text=True, timeout=5)
+        out = (proc.stdout or "").strip()
+    except Exception:
+        return None
+    m = re.search(r"(\d+)\s*%", out)
+    if not m:
+        return None
+    pct = int(m.group(1))
+    if zh:
+        return ("电量还有 %d%%。" % pct), "local"
+    return ("Battery is at %d%%." % pct), "local"
+
+
+# ---------------------------------------------------------------------------
+# Offline precheck — runs BEFORE the AI intent layer (cli step) so every
+# offline-answerable utterance skips L3 and answers instantly.
+# ---------------------------------------------------------------------------
+
+def precheck(text: str, cfg):
+    """Offline answers: persona, explicit memory commands, closing remarks, and
+    local facts (time/date/weekday/battery). Returns {kind, reply, via} or None.
+    Called from the CLI before the AI intent layer AND at the top of process()."""
+    text = (text or "").strip()
+    if not text:
+        return None
+
+    pa = character_mod.match(text)
+    if pa:
+        _note(text, pa, cfg)
+        return {"kind": "answer", "reply": pa, "via": "persona"}
+
+    cmd = chatmem.explicit_command(text)
+    if cmd:
+        return _handle_explicit(cmd, cfg)
+
+    if chatmem.is_closing(text):
+        _note(text, CLOSING_REPLY, cfg)
+        chatmem.park()
+        return {"kind": "answer", "reply": CLOSING_REPLY, "via": "memory", "end": True}
+
+    loc = local_fact_answer(text)
+    if loc:
+        reply, via = loc
+        return {"kind": "answer", "reply": reply, "via": via}
+
+    return None
 
 
 def _turns_text(turns: list) -> str:
@@ -112,22 +243,11 @@ def process(text: str, cfg: dict):
     if not text:
         return None
 
-    # 0) persona (offline, no model)
-    pa = character_mod.match(text)
-    if pa:
-        _note(text, pa, cfg)
-        return {"kind": "answer", "reply": pa, "via": "persona"}
-
-    # 1) explicit memory / conversation commands (offline)
-    cmd = chatmem.explicit_command(text)
-    if cmd:
-        return _handle_explicit(cmd, cfg)
-
-    # 1.5) closing remark (offline, no model): reply briefly and end the session.
-    if chatmem.is_closing(text):
-        _note(text, CLOSING_REPLY, cfg)
-        chatmem.park()
-        return {"kind": "answer", "reply": CLOSING_REPLY, "via": "memory", "end": True}
+    # Offline precheck first (persona / explicit memory / closing / local facts)
+    # — no model call for anything answerable offline.
+    pre = precheck(text, cfg)
+    if pre is not None:
+        return pre
 
     # 2) session rollover + lazy consolidation, ensure an active thread
     s = chatmem.load_session()

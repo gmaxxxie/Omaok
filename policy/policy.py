@@ -13,6 +13,7 @@ from intent import rules
 # Types that are destructive, irreversible, or have global side effects.
 _CONFIRM_TYPES = frozenset({
     "close_active_window",
+    "close_all_windows",
     "toggle_fullscreen",
     "lock_screen",
     "shutdown",

@@ -34,6 +34,15 @@ ACTION_DESCRIPTIONS = {
     "open_file": "Open a file with its default application",
     "open_folder": "Open a folder in the file manager",
     "close_active_window": "Close the currently focused window",
+    "close_all_windows": "Close all open windows",
+    "maximize_window": "Maximize (or restore) the active window",
+    "toggle_tiled_fullscreen": "Toggle tiled fullscreen on the active window",
+    "toggle_window_gaps": "Toggle the global window gaps",
+    "toggle_window_transparency": "Toggle transparency on the active window",
+    "wake_screen": "Wake displays and restore brightness after idle",
+    "toggle_weather": "Toggle the weather panel",
+    "extract_screen_text": "Extract text from a screen region with OCR",
+    "scan_qr": "Decode a QR code from a screen region",
     "switch_workspace": "Switch to a numbered workspace",
     "move_active_window_to_workspace": "Move the active window to a numbered workspace",
     "toggle_fullscreen": "Toggle fullscreen on the active window",
@@ -162,7 +171,7 @@ def generate_catalog() -> dict:
         "machine": _machine(),
         "actions": [
             {"type": t, "description": ACTION_DESCRIPTIONS[t],
-             "risk": "confirm_required" if t in ("close_active_window", "toggle_fullscreen", "lock_screen") else "low"}
+             "risk": "confirm_required" if t in ("close_active_window", "close_all_windows", "toggle_fullscreen", "lock_screen") else "low"}
             for t in sorted(ACTION_DESCRIPTIONS)
         ],
         "omarchy_commands": _omarchy_commands(),

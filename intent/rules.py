@@ -26,6 +26,10 @@ ALLOWED_TYPES = frozenset({
     # batch 3: destructive / privacy-sensitive (confirm_required)
     "shutdown", "reboot", "logout",
     "screen_record_start", "screen_record_stop",
+    # fast window / system control (batch 4)
+    "maximize_window", "close_all_windows",
+    "toggle_tiled_fullscreen", "toggle_window_gaps", "toggle_window_transparency",
+    "wake_screen", "toggle_weather", "extract_screen_text", "scan_qr",
 })
 
 _PUNCT_RE = re.compile(r"[，。！？、；：“”‘’《》【】（）…·!?.,;:()\[\]\"'<>{}|/\\]")
@@ -116,16 +120,25 @@ _FILE_RE = re.compile(
 )
 
 _OPEN_RE = re.compile(
-    r"(?:打开|启动|开启|运行|调出|唤出|点开|唤起|呼出|拉出|调起来)\s*(?:一下\s*)?(.+)"
+    r"(?:打开|启动|开启|运行|调出|唤出|点开|唤起|呼出|拉出|调起来|开个)\s*(?:一下\s*)?(.+)"
     r"|(?:open|launch|start|run|bring up)\s+(.+)",
     re.I,
 )
 
 # Supplementary fast rule: "把微信打开 / 帮我把微信打开 / 我想用微信 / 我要用微信".
 # Checked right before the generic _OPEN_RE so 把…打开 doesn't shadow folder/file rules.
+#
+# The whole phrase is END-anchored and the polite prefix is consumed as part of the
+# match, so a leading 帮我/请/能不能 can never be mis-captured as the app name and
+# the verb can never split mid-phrase (e.g. "打开一下浏览器" must stay verb+object,
+# not capture "打" — that used to fall through to the slow AI intent layer).
 _REQUEST_PREFIX = r"(?:帮我|给我|请|麻烦(?:你)?|我想|我要|我想要|能不能|可以|可不可以)"
 _OPEN_V2_RE = re.compile(
-    r"(?:" + _REQUEST_PREFIX + r"\s*)?把?\s*([^\s，。]+?)\s*(?:打开|启动|开启|运行|点开|唤起|呼出|拉出|开一下|打开一下|调出来)"
+    r"(?:" + _REQUEST_PREFIX + r"\s*)?"        # polite prefix (consumed when present)
+    r"把?\s*"                                    # optional 把
+    r"([^\s，。]+?)"                             # app name (lazy)
+    r"\s*(?:打开一下|打开|启动|开启|运行|点开|唤起|呼出|拉出|开一下|调出来)"  # verb, longest first
+    r"(?:吧|嘛|呗|哦|呀|啦|吗)?\s*$"             # trailing politeness, end-anchored
     r"|" + _REQUEST_PREFIX + r"\s*(?:用|使用)\s*(?:一下\s*)?([^\s，。]+?)(?:吧|呢)?\s*$",
     re.I,
 )
@@ -145,6 +158,7 @@ _PLAY_PAUSE_RE = re.compile(
     r"|放首歌吧|放首歌听|放一首歌|来点背景音乐|放点轻音乐|播首歌|听会儿歌|放个歌"
     r"|(?:想|要|给我)?(?:听|放)(?:个|首|点)?(?:音乐|歌|歌曲)"
     r"|播\S*音乐\S*|音乐\S*(?:听|放|播)"
+    r"|(?:把|将)?\s*(?:音乐|歌|歌曲|音乐播放)\s*(?:关了|关掉|停掉|停了|停下来|暂停)"
     r"|play\s*(?:music|some music|a song)?|pause\s*(?:music|the music)?|resume|stop playing",
     re.I,
 )
@@ -152,6 +166,9 @@ _NEXT_RE = re.compile(r"下一首|下一曲|切歌|换歌|跳过|换一首|换�
 _PREV_RE = re.compile(r"上一首|上一曲|切回上一首|换回上一首|上一首吧|往回放|往前听|previous track|previous song|previous", re.I)
 _VOLUME_UP_RE = re.compile(r"调大音量|音量调大|音量加|增大音量|调高音量|声音大点|大声点|声音大一点|把声音(?:调大|调高|开大|放大|大点|大一点)|声音(?:调大|调高|开大|放大|大点|大一点)|音量开到最大|声音开到最大|开到最大音量|开到最大|最大音量|volume up|turn up|louder", re.I)
 _VOLUME_DOWN_RE = re.compile(r"调小音量|音量调小|音量减|减小音量|调低音量|声音小点|小声点|声音小一点|把声音(?:调小|调低|开小|放小|小点|小一点)|声音(?:调小|调低|开小|放小|小点|小一点)|音量开到最小|声音开到最小|开到最小音量|开到最小|最小音量|volume down|turn down|quieter", re.I)
+# 调到最大/最小 variants (checked after the generic up/down so bare 调大/调小 still win).
+_VOLUME_MAX_RE = re.compile(r"音量调到(?:最大|最高)|把音量调到(?:最大|最高)|声音调到(?:最大|最高)|把声音调到(?:最大|最高)|调到最大音量|调最大", re.I)
+_VOLUME_MIN_RE = re.compile(r"音量调到(?:最小|最低)|把音量调到(?:最小|最低)|声音调到(?:最小|最低)|把声音调到(?:最小|最低)|调到最小音量|调最小", re.I)
 _MUTE_RE = re.compile(r"静音|关闭声音|取消静音|打开声音|把声音(?:关了|关掉)|mute|unmute|silence", re.I)
 
 # ---- conventional omarchy toggles (batch 1) ----
@@ -176,7 +193,7 @@ _PM_PERF_RE = re.compile(r"性能模式|开启性能|性能优先|performance mo
 _PM_BAL_RE = re.compile(r"平衡模式|均衡模式|balanced mode", re.I)
 
 _MIC_TOGGLE_RE = re.compile(r"静音麦克风|麦克风静音|关闭麦克风|打开麦克风|mute microphone|unmute microphone|microphone mute", re.I)
-_DND_RE = re.compile(r"勿扰|免打扰|勿扰模式|do not disturb|dnd", re.I)
+_DND_RE = re.compile(r"勿扰|免打扰|勿扰模式|别吵了|安静点|安静一下|安静下来|消停会儿|消停点|别烦我|先静音通知|do not disturb|dnd|be quiet|quiet mode", re.I)
 _BAR_RE = re.compile(r"隐藏顶栏|显示顶栏|顶栏|任务栏|把(?:顶栏|任务栏)\s*(?:隐藏|收起|收了|关掉|收起来)|(?:隐藏|收起)\s*(?:顶栏|任务栏)|hide bar|show bar|toggle bar", re.I)
 _CLIPBOARD_RE = re.compile(r"打开剪贴板|剪贴板|clipboard", re.I)
 _EMOJI_RE = re.compile(r"打开表情|表情符号|表情|emoji", re.I)
@@ -206,6 +223,41 @@ _LOGOUT_RE = re.compile(r"注销|退出登录|logout|log out", re.I)
 _REC_ON_RE = re.compile(r"开始录屏|开始录制|开始录像|录屏|屏幕录制|start recording|start screen recording|screenrecord", re.I)
 _REC_OFF_RE = re.compile(r"停止录屏|停止录制|结束录屏|停止录像|stop recording|stop screen recording|end recording", re.I)
 
+# ---- fast window control (batch 4): Omarchy Lua dispatcher / conventional cmds ----
+# 最大化窗口 == the "maximized" fullscreen mode (same binding as SUPER+ALT+F).
+_MAXIMIZE_RE = re.compile(
+    r"最大化(?:这个|当前)?窗口|把(?:这个|当前)?窗口最大化|窗口最大化|窗口放大|放大窗口|最大化"
+    r"|maximize(?:\s*(?:the\s*)?window)?",
+    re.I,
+)
+# 关闭所有窗口 — confirm_required (can lose unsaved work).
+_CLOSE_ALL_RE = re.compile(
+    r"关闭所有窗口|关掉所有窗口|把所有窗口(?:关闭|关掉|关了)|全部窗口(?:关闭|关掉)|全部窗口都(?:关了|关掉)|所有窗口都(?:关了|关掉)"
+    r"|close all(?: windows)?",
+    re.I,
+)
+_TILED_FS_RE = re.compile(r"平铺全屏|平铺模式|tiled fullscreen|tiled full screen", re.I)
+_GAPS_RE = re.compile(r"窗口间距|窗口缝隙|把间距(?:调|关|开)|gap(?:s)?\s*(?:toggle|off|on)", re.I)
+_TRANSPARENCY_RE = re.compile(
+    r"透明窗口|窗口透明|把窗口(?:变|调|设成)?透明|窗口变透明|window transparency|make window transparent",
+    re.I,
+)
+
+# ---- system wake / weather / OCR / QR (conventional omarchy commands) ----
+_WAKE_RE = re.compile(
+    r"唤醒屏幕|唤醒显示器|点亮屏幕|把屏幕点亮|wake(?: up)? (?:the )?(?:screen|display)|wake display",
+    re.I,
+)
+_WEATHER_RE = re.compile(
+    r"天气面板|打开天气(?:面板)?|显示天气|关闭天气面板|关掉天气面板|天气小部件|weather panel|show weather",
+    re.I,
+)
+_OCR_RE = re.compile(
+    r"提取屏幕文字|提取屏幕文本|识别屏幕文字|屏幕文字识别|屏幕OCR|提取文字|OCR识别|识别屏幕|extract(?: screen)? text|ocr",
+    re.I,
+)
+_QR_RE = re.compile(r"扫二维码|扫码|扫个码|扫一下二维码|扫个二维码|扫一扫|scan(?: a| the)? qr(?: code)?", re.I)
+
 
 def parse(text: str) -> dict | None:
     """Parse a transcript into an Action draft, or None if unclear."""
@@ -216,15 +268,30 @@ def parse(text: str) -> dict | None:
     m = _CLOSE_RE.search(t)
     if m:
         return _draft("close_active_window")
+    m = _CLOSE_ALL_RE.search(t)
+    if m:
+        return _draft("close_all_windows")
     m = _LOCK_RE.search(t)
     if m:
         return _draft("lock_screen")
     m = _SCREENSHOT_RE.search(t)
     if m:
         return _draft("take_screenshot")
+    m = _TILED_FS_RE.search(t)  # before generic fullscreen: 平铺全屏 contains 全屏
+    if m:
+        return _draft("toggle_tiled_fullscreen")
     m = _FULLSCREEN_RE.search(t)
     if m:
         return _draft("toggle_fullscreen")
+    m = _MAXIMIZE_RE.search(t)
+    if m:
+        return _draft("maximize_window")
+    m = _GAPS_RE.search(t)
+    if m:
+        return _draft("toggle_window_gaps")
+    m = _TRANSPARENCY_RE.search(t)
+    if m:
+        return _draft("toggle_window_transparency")
 
     m = _PLAY_PAUSE_RE.search(t)
     if m:
@@ -239,6 +306,12 @@ def parse(text: str) -> dict | None:
     if m:
         return _draft("volume_up")
     m = _VOLUME_DOWN_RE.search(t)
+    if m:
+        return _draft("volume_down")
+    m = _VOLUME_MAX_RE.search(t)
+    if m:
+        return _draft("volume_up")
+    m = _VOLUME_MIN_RE.search(t)
     if m:
         return _draft("volume_down")
     m = _MIC_TOGGLE_RE.search(t)  # more specific than generic mute
@@ -314,6 +387,20 @@ def parse(text: str) -> dict | None:
     m = _EMOJI_RE.search(t)
     if m:
         return _draft("open_emoji")
+
+    # ---- batch 4: window/system helpers ----
+    m = _WAKE_RE.search(t)
+    if m:
+        return _draft("wake_screen")
+    m = _WEATHER_RE.search(t)
+    if m:
+        return _draft("toggle_weather")
+    m = _OCR_RE.search(t)
+    if m:
+        return _draft("extract_screen_text")
+    m = _QR_RE.search(t)
+    if m:
+        return _draft("scan_qr")
 
     # ---- batch 2 parameterized ----
     m = _REMINDER_V2_RE.search(t)
@@ -393,7 +480,7 @@ def parse(text: str) -> dict | None:
         name = next((g for g in m.groups() if g and g.strip()), None)
         if name:
             name = re.sub(r"(软件|程序|应用)\s*$", "", name.strip())
-        return _draft("open_app", raw_target=(name or "").strip())
+        return _draft("open_app", raw_target=_clean_app_name(name or ""))
 
     m = _FOCUS_RE.search(t)
     if m:
@@ -406,9 +493,14 @@ def parse(text: str) -> dict | None:
         if name:
             # Strip launch-package suffixes so "微信软件/程序" resolves to 微信.
             name = re.sub(r"(软件|程序|应用)\s*$", "", name.strip())
-        return _draft("open_app", raw_target=(name or "").strip())
+        return _draft("open_app", raw_target=_clean_app_name(name or ""))
 
     return None
+
+
+def _clean_app_name(name: str) -> str:
+    """Trim trailing politeness particles from an open_app target."""
+    return re.sub(r"(?:好吗|可以吗|吧|嘛|呗|哦|呀|呢|啦|吗|一下)\s*$", "", (name or "")).strip()
 
 
 def _draft(action_type: str, raw_target: str | None = None, **extra) -> dict:

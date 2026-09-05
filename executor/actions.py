@@ -239,6 +239,33 @@ def execute(action: dict, cfg: dict) -> tuple:
     if action_type == "close_active_window":
         return _hypr_dispatch("hl.dsp.window.close()")
 
+    if action_type == "close_all_windows":
+        return _run(["omarchy", "hyprland", "window", "close", "all"], timeout=20)
+
+    if action_type == "maximize_window":
+        return _hypr_dispatch('hl.dsp.window.fullscreen({ mode = "maximized" })')
+
+    if action_type == "toggle_tiled_fullscreen":
+        return _run(["omarchy", "hyprland", "window", "tiled", "fullscreen", "toggle"], timeout=15)
+
+    if action_type == "toggle_window_gaps":
+        return _run(["omarchy", "hyprland", "window", "gaps", "toggle"], timeout=15)
+
+    if action_type == "toggle_window_transparency":
+        return _run(["omarchy", "hyprland", "window", "transparency", "toggle"], timeout=15)
+
+    if action_type == "wake_screen":
+        return _run(["omarchy", "system", "wake"], timeout=15)
+
+    if action_type == "toggle_weather":
+        return _run(["omarchy", "notification", "weather"], timeout=15)
+
+    if action_type == "extract_screen_text":
+        return _run(["omarchy", "capture", "text"], timeout=30)
+
+    if action_type == "scan_qr":
+        return _run(["omarchy", "capture", "qr"], timeout=30)
+
     if action_type == "switch_workspace":
         return _hypr_dispatch("hl.dsp.focus({ workspace = %s })" % _lua_str(str(target.get("id"))))
 
