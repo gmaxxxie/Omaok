@@ -40,7 +40,6 @@ if _ROOT not in sys.path:
 
 from config import blocklist as blocklist_mod  # noqa: E402
 from config import catalog as catalog_mod  # noqa: E402
-from config import character as character_mod  # noqa: E402
 from config import pet as pet_mod  # noqa: E402
 from config import memory as memory_mod  # noqa: E402
 from config import settings  # noqa: E402
@@ -150,33 +149,38 @@ def _process_transcript(st: dict, cfg: dict, aliases: dict) -> None:
     #        model call on it.
     _chattext = intent_rules.normalize(text)
     if action is None and len(_chattext) >= 2 and (cfg.get("chat") or {}).get("enabled", True):
-        # Character memory: who / background / ability questions are answered
-        # instantly and offline from omaok's persona (no model call).
-        persona_answer = character_mod.match(text)
-        if persona_answer:
-            st["phase"] = "chat_reply"
-            st["chat_reply"] = persona_answer
-            st["chat_defer"] = ""
-            st["error"] = ""
-            write_state(st)
-            audit("character reply: %r" % persona_answer)
-            return
-        chat = intent_ai.chat_analyze(text, cfg)
-        if chat and chat.get("kind") == "answer" and chat.get("reply"):
-            st["phase"] = "chat_reply"
-            st["chat_reply"] = chat["reply"]
-            st["chat_defer"] = ""
-            st["error"] = ""
-            write_state(st)
-            audit("chat reply: %r" % chat["reply"])
-            return
-        if chat and chat.get("kind") == "defer" and chat.get("reply"):
+        # L4: long conversation + short/long-term memory. The chat layer handles
+        # persona offline answers, explicit memory commands (remember/forget/
+        # recall/end), session rollover + lazy consolidation into long-term
+        # facts, long-term retrieval, and the context-aware model reply.
+        from intent import chat as chat_layer
+        result = chat_layer.process(text, cfg)
+        if result is None:
+            pass  # model disabled/failed -> fall through to "could not understand"
+        elif result.get("kind") == "defer" and result.get("reply"):
             st["phase"] = "chat_defer"
-            st["chat_defer"] = chat["reply"]
+            st["chat_defer"] = result["reply"]
             st["chat_reply"] = ""
             st["error"] = ""
             write_state(st)
-            audit("chat defer: %r" % chat["reply"])
+            audit("chat defer: %r" % result["reply"])
+            return
+        elif result.get("kind") == "answer" and result.get("reply"):
+            st["phase"] = "chat_reply"
+            st["chat_reply"] = result["reply"]
+            st["chat_defer"] = ""
+            st["error"] = ""
+            write_state(st)
+            audit("chat reply (%s): %r" % (result.get("via", "chat"), result["reply"]))
+            return
+        elif result.get("kind") == "none":
+            # noise / greeting — stay idle quietly, no error, no state churn.
+            st["phase"] = "idle"
+            st["chat_reply"] = ""
+            st["chat_defer"] = ""
+            st["error"] = ""
+            write_state(st)
+            audit("chat none (ignored)")
             return
 
     if action is None:

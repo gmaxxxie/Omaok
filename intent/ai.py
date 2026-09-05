@@ -650,6 +650,15 @@ def daemon_main(cfg: dict) -> int:
                 except ValueError:
                     conn.sendall(json.dumps({"ok": False, "error": "bad request"}).encode())
                     continue
+                if req.get("kind") == "chat":
+                    # Chat layer: run the exact (context-aware) prompt on the warm pi.
+                    prompt = str(req.get("prompt") or "")
+                    try:
+                        text = _prompt_on(proc, prompt, timeout)
+                        conn.sendall(json.dumps({"ok": True, "text": text}).encode("utf-8"))
+                    except AIError as exc:
+                        conn.sendall(json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                    continue
                 transcript = str(req.get("transcript") or "")
                 try:
                     text = _prompt_on(proc, _build_prompt(transcript), timeout)
@@ -851,23 +860,81 @@ def analyze(transcript: str, cfg: dict) -> dict | None:
 _CHAT_BACKENDS = _BACKENDS
 
 
-def _chat_prompt(transcript: str) -> str:
-    return f"""{character_mod.blurb()}
-The user said something that is NOT a computer command. Decide how to handle it.
+def _chat_prompt(transcript: str, context: dict | None = None) -> str:
+    ctx = context or {}
+    parts = [character_mod.blurb()]
 
-Output ONLY a JSON object, no markdown, no explanation:
-{{"kind": "answer"|"defer"|"none", "reply": "<short text>"}}
+    facts = ctx.get("facts") or []
+    if facts:
+        parts.append("Memory about the user (long-term):\n- " + "\n- ".join(facts))
 
-- kind=answer: the user asked a simple question that can be answered in 1-2 short sentences. reply = that answer, plain text, no markdown, under 120 chars, in the user's language.
-- kind=defer: the question is complex, open-ended, needs deep research/discussion, or you are not confident — reply = a short prompt (max 40 chars, in the user's language) to hand off to a full AI tool, e.g. "深入研究这个主题" / "帮我查一下并讨论".
-- kind=none: the input is just noise, a greeting, or has no meaning — reply = "".
+    summary = (ctx.get("summary") or "").strip()
+    turns = ctx.get("turns") or []
+    if summary:
+        parts.append("Earlier conversation summary: " + summary)
+    if turns:
+        lines = ["%s: %s" % ("User" if t.get("role") == "user" else "omaok", t.get("text", ""))
+                 for t in turns]
+        parts.append("Recent conversation:\n" + "\n".join(lines))
 
-User said: {transcript}"""
+    parts.append(
+        "The user said something that is NOT a computer command. Continue the "
+        "conversation naturally, staying consistent with the context above.\n\n"
+        "Output ONLY a JSON object, no markdown, no explanation:\n"
+        '{{"kind": "answer"|"defer"|"none", "reply": "<short text>"}}\n\n'
+        "- kind=answer: answer in 1-2 short sentences. reply = that answer, plain "
+        "text, under 120 chars, in the user's language.\n"
+        "- kind=defer: the question is complex, open-ended, needs deep research/"
+        "discussion, or you are not confident — reply = a short prompt (max 40 "
+        "chars, in the user's language) to hand off to a full AI tool.\n"
+        "- kind=none: the input is just noise, a greeting, or has no meaning — "
+        "reply = \"\"."
+    )
+    parts.append("User said: " + transcript)
+    return "\n\n".join(parts)
+
+
+def _daemon_chat(prompt: str, cfg: dict) -> str | None:
+    """Ask the persistent ai-daemon to run a chat prompt on the WARM pi process.
+    Returns the raw text or None on any failure (caller falls back to cold)."""
+    import socket
+    path = _sock_path()
+    timeout = int((cfg.get("ai") or {}).get("timeout_secs", 60)) + 15
+    for attempt in range(2):
+        try:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            sock.connect(path)
+            sock.sendall(json.dumps({"kind": "chat", "prompt": prompt}).encode("utf-8"))
+            chunks = []
+            while True:
+                data = sock.recv(65536)
+                if not data:
+                    break
+                chunks.append(data)
+            sock.close()
+            resp = json.loads(b"".join(chunks).decode("utf-8", "replace"))
+            if resp.get("ok") and resp.get("text"):
+                return resp["text"]
+            return None
+        except (OSError, ValueError):
+            if attempt == 0:
+                _ensure_daemon()
+                time.sleep(2.0)  # let it bind the socket
+                continue
+            return None
+        except Exception:
+            return None
+    return None
 
 
 def _chat_rpc_text(prompt: str, cfg: dict, timeout: float) -> str:
-    """One-shot text from the pi backend (warm daemon not used — chat is
-    infrequent, a cold spawn is fine and avoids coupling to the intent daemon)."""
+    """Chat text from the pi backend. Prefers the WARM ai-daemon (~1-3s), falls
+    back to a cold pi spawn when no daemon is available."""
+    if _backend_of(cfg) == "pi-rpc":
+        warm = _daemon_chat(prompt, cfg)
+        if warm is not None:
+            return warm
     proc = _spawn_pi(cfg)
     try:
         _send(proc, {"type": "set_thinking_level", "id": "th", "level": _thinking_level(cfg)})
@@ -883,25 +950,85 @@ def _chat_rpc_text(prompt: str, cfg: dict, timeout: float) -> str:
                 pass
 
 
-def chat_analyze(transcript: str, cfg: dict) -> dict | None:
+def _backend_text(prompt: str, cfg: dict, timeout: float) -> str:
+    """Dispatch a plain-text prompt to the configured chat backend."""
+    backend = _backend_of(cfg)
+    if backend == "opencode":
+        return _opencode_prompt(prompt, cfg, timeout)
+    if backend == "codex":
+        return _codex_prompt(prompt, cfg, timeout)
+    return _chat_rpc_text(prompt, cfg, timeout)
+
+
+def summarize_turns(overflow_text: str, current_summary: str, cfg: dict) -> str:
+    """Roll old turns into a short running summary (rolling-summary pattern).
+    Returns the new summary, or the old one on failure (never raises)."""
+    ai = cfg.get("ai") or {}
+    if not ai.get("enabled", True):
+        return current_summary
+    prompt = (
+        "Condense older conversation turns into a short running summary (max 4 "
+        "lines, in the user's language). Keep key facts, decisions, and open "
+        "questions. Output ONLY the combined summary text, no markdown.\n\n"
+        "Current summary:\n" + (current_summary or "(none)") +
+        "\n\nNew older turns:\n" + overflow_text
+    )
+    try:
+        text = _backend_text(prompt, cfg, float(ai.get("timeout_secs", 60)))
+        text = (text or "").strip()
+        return text[:600] if text else current_summary
+    except AIError:
+        return current_summary
+
+
+def consolidate_facts(turns_text: str, existing_facts: list, cfg: dict) -> list:
+    """Distill a finished conversation into durable facts (mem0-style extract +\n
+    dedupe happens in chatmem.merge_consolidated). Returns a list of
+    {"text", "category"} or [] on failure. Never raises."""
+    ai = cfg.get("ai") or {}
+    if not ai.get("enabled", True):
+        return []
+    existing = "\n- ".join((str(f.get("text", "")) for f in existing_facts)) if existing_facts else "(none)"
+    prompt = (
+        "You are distilling a finished conversation with a user of a local "
+        "desktop voice assistant into durable long-term memory.\n\n"
+        "Conversation turns:\n" + turns_text +
+        "\n\nExisting memory entries (skip duplicates):\n- " + existing +
+        "\n\nExtract NEW durable facts/preferences/identity/todo about the user "
+        "worth remembering across sessions. Skip transient small talk. Choose a "
+        "category per item: preference | fact | identity | todo | other.\n\n"
+        'Output ONLY a JSON array, no markdown, no explanation:\n'
+        '[{"text": "...", "category": "fact"}]\n\n'
+        'Empty array [] if nothing worth keeping.'
+    )
+    try:
+        text = _backend_text(prompt, cfg, float(ai.get("timeout_secs", 60)))
+        obj = _extract_json(text)
+        if not isinstance(obj, list):
+            return []
+        out = []
+        for it in obj:
+            if isinstance(it, dict) and str(it.get("text") or "").strip():
+                out.append({"text": str(it["text"]).strip()[:300],
+                            "category": str(it.get("category") or "fact")[:20]})
+        return out
+    except AIError:
+        return []
+
+
+def chat_analyze(transcript: str, cfg: dict, context: dict | None = None) -> dict | None:
     """Return {{kind, reply}} for a non-command transcript, or None on failure.
+    context (optional): {"summary", "turns", "facts"} for long conversations.
     Never raises. kind: answer | defer | none."""
     if not transcript or len(transcript.strip()) < 2:
         return None
     ai = cfg.get("ai") or {}
     if not ai.get("enabled", True):
         return None
-    prompt = _chat_prompt(transcript)
+    prompt = _chat_prompt(transcript, context)
     timeout = float(ai.get("timeout_secs", 60))
-    text = None
-    backend = _backend_of(cfg)
     try:
-        if backend == "opencode":
-            text = _opencode_prompt(prompt, cfg, timeout)
-        elif backend == "codex":
-            text = _codex_prompt(prompt, cfg, timeout)
-        else:
-            text = _chat_rpc_text(prompt, cfg, timeout)
+        text = _backend_text(prompt, cfg, timeout)
     except AIError:
         return None
     obj = _extract_json(text)
