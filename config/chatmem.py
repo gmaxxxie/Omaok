@@ -321,6 +321,31 @@ _END_RE = re.compile(
     r"|end (?:the )?conversation|stop chatting|exit chat|bye for now|that's all for now",
     re.I)
 
+# Natural closing remarks that wrap up a conversation (offline, conservative:
+# FULL-match on a short utterance only, so a politeness prefix in a real
+# follow-up like "好的谢谢，那预算呢" is NOT treated as a closer).
+_CLOSING_RE = re.compile(
+    r"^(?:"
+    r"好的(?:吧|呢|啦|嘞)?|好嘞|好哒|好呀|明白了|懂了|知道了|嗯好|可以了|行吧|"
+    r"没事了|没别的事了|没有了|就这(?:样|么)吧|先这样|就到这(?:里|儿)?|"
+    r"谢谢|多谢|辛苦(?:了|啦)?|感谢|麻烦你了|"
+    r"thanks|thank you|got it|ok(?:ay)?|that\s*s\s*all|all good|fine,? thanks|sounds good|no problem"
+    r")"
+    r"(?:\s*(?:谢谢|多谢|辛苦(?:了|啦)?|感谢|ok(?:ay)?|thanks|thank you|got it))?\s*$",
+    re.I,
+)
+
+
+def is_closing(text: str) -> bool:
+    """True when the utterance is a pure closing remark (offline). Conservative:
+    only short full matches, so real follow-ups never get cut off."""
+    if not text or not text.strip():
+        return False
+    t = normalize(text)
+    if not t or len(t) > 16:
+        return False
+    return bool(_CLOSING_RE.search(t))
+
 
 def explicit_command(text: str):
     """Detect an explicit memory/conversation command. Returns

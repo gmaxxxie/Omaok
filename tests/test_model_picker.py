@@ -345,11 +345,11 @@ class TestChatFallback(unittest.TestCase):
             with mock.patch.object(ai, "_chat_rpc_text",
                                    return_value='{"kind": "answer", "reply": "巴黎"}'):
                 self.assertEqual(ai.chat_analyze("法国的首都", {"ai": {"enabled": True}}),
-                                 {"kind": "answer", "reply": "巴黎"})
+                                 {"kind": "answer", "reply": "巴黎", "end": False})
             with mock.patch.object(ai, "_chat_rpc_text",
                                    return_value='{"kind": "defer", "reply": "深入研究"}'):
                 self.assertEqual(ai.chat_analyze("复杂问题", {"ai": {"enabled": True}}),
-                                 {"kind": "defer", "reply": "深入研究"})
+                                 {"kind": "defer", "reply": "深入研究", "end": False})
             with mock.patch.object(ai, "_chat_rpc_text", return_value="not json"):
                 self.assertIsNone(ai.chat_analyze("x", {"ai": {"enabled": True}}))
 

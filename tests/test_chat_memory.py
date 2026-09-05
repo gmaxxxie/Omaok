@@ -240,6 +240,54 @@ class TestChatLayer(ChatMemBase):
         self.assertIn("用户喜欢喝冰美式", texts)
         self.assertEqual(r["kind"], "answer")
 
+    def test_model_end_true_parks_session(self):
+        # The model judges the conversation can end -> session parked after reply.
+        with mock.patch("intent.ai.chat_analyze",
+                        return_value={"kind": "answer", "reply": "不客气，有问题随时找我", "end": True}):
+            r = chat_layer.process("好的谢谢", self._cfg())
+        self.assertEqual(r["end"], True)
+        s = chatmem.load_session()
+        self.assertFalse(s["active"])
+        self.assertEqual(len(s["turns"]), 0)
+        self.assertEqual(len(s["pending"]), 2)  # user + assistant turn stashed
+
+    def test_model_end_false_keeps_session(self):
+        with mock.patch("intent.ai.chat_analyze",
+                        return_value={"kind": "answer", "reply": "周边游两三百就够啦"}):
+            r = chat_layer.process("那预算多少合适", self._cfg())
+        self.assertEqual(r.get("end"), False)
+        s = chatmem.load_session()
+        self.assertTrue(s["active"])
+        self.assertEqual(len(s["turns"]), 2)
+
+    def test_offline_closing_remark_ends_session(self):
+        with mock.patch("intent.ai.chat_analyze") as ca:
+            r = chat_layer.process("好的谢谢", self._cfg())
+            ca.assert_not_called()  # offline, no model call
+        self.assertEqual(r["end"], True)
+        self.assertIn("不客气", r["reply"])
+        self.assertFalse(chatmem.load_session()["active"])
+
+    def test_closing_with_followup_is_not_closing(self):
+        # "好的谢谢，那预算呢" is a real follow-up — must go to the model.
+        with mock.patch("intent.ai.chat_analyze",
+                        return_value={"kind": "answer", "reply": "预算五百左右"}) as ca:
+            r = chat_layer.process("好的谢谢，那预算呢", self._cfg())
+            ca.assert_called_once()
+        self.assertEqual(r.get("end"), False)
+        self.assertTrue(chatmem.load_session()["active"])
+
+
+class TestClosingRemarks(ChatMemBase):
+    def test_closers(self):
+        for phrase in ["好的", "好的谢谢", "明白了", "没事了", "没别的事了", "就这样吧",
+                       "谢谢", "辛苦了", "thanks", "got it", "that's all"]:
+            self.assertTrue(chatmem.is_closing(phrase), phrase)
+
+    def test_non_closers(self):
+        for phrase in ["好的谢谢，那预算呢", "我们聊聊旅行吧", "帮我打开浏览器", "什么是量子计算"]:
+            self.assertFalse(chatmem.is_closing(phrase), phrase)
+
 
 if __name__ == "__main__":
     unittest.main()

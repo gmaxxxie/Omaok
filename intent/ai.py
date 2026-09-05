@@ -881,7 +881,7 @@ def _chat_prompt(transcript: str, context: dict | None = None) -> str:
         "The user said something that is NOT a computer command. Continue the "
         "conversation naturally, staying consistent with the context above.\n\n"
         "Output ONLY a JSON object, no markdown, no explanation:\n"
-        '{{"kind": "answer"|"defer"|"none", "reply": "<short text>"}}\n\n'
+        '{{"kind": "answer"|"defer"|"none", "reply": "<short text>", "end": true|false}}\n\n'
         "- kind=answer: answer in 1-2 short sentences. reply = that answer, plain "
         "text, under 120 chars, in the user's language.\n"
         "- kind=defer: ONLY when the topic genuinely needs up-to-date web info, deep "
@@ -890,7 +890,10 @@ def _chat_prompt(transcript: str, context: dict | None = None) -> str:
         "can answer reasonably — answer those. reply = a short prompt (max 40 "
         "chars, in the user's language) to hand off to a full AI tool.\n"
         "- kind=none: the input is just noise, a greeting, or has no meaning — "
-        "reply = \"\"."
+        "reply = \"\".\n"
+        "- end=true: this utterance wraps up the conversation (a closing remark "
+        "like 好的谢谢/明白了/没别的事了/就这样吧, or the topic is fully resolved "
+        "and nothing more is expected). Otherwise false."
     )
     parts.append("User said: " + transcript)
     return "\n\n".join(parts)
@@ -1040,5 +1043,5 @@ def chat_analyze(transcript: str, cfg: dict, context: dict | None = None) -> dic
     if kind not in ("answer", "defer", "none"):
         return None
     reply = str(obj.get("reply") or "").strip()
-    return {"kind": kind, "reply": reply[:200]}
+    return {"kind": kind, "reply": reply[:200], "end": bool(obj.get("end"))}
 

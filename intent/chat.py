@@ -18,6 +18,8 @@ from config import chatmem
 from config import character as character_mod
 from intent import ai as intent_ai
 
+CLOSING_REPLY = "不客气～有事随时叫我。"
+
 
 def _turns_text(turns: list) -> str:
     return "\n".join("%s: %s" % (t.get("role"), t.get("text", "")) for t in turns)
@@ -116,6 +118,12 @@ def process(text: str, cfg: dict):
     if cmd:
         return _handle_explicit(cmd, cfg)
 
+    # 1.5) closing remark (offline, no model): reply briefly and end the session.
+    if chatmem.is_closing(text):
+        _note(text, CLOSING_REPLY, cfg)
+        chatmem.park()
+        return {"kind": "answer", "reply": CLOSING_REPLY, "via": "memory", "end": True}
+
     # 2) session rollover + lazy consolidation, ensure an active thread
     s = chatmem.load_session()
     if chatmem.should_rollover(s):
@@ -147,5 +155,9 @@ def process(text: str, cfg: dict):
         chatmem.append_turn(s, "assistant", reply)
         chatmem.save_session(s)
         _maybe_summarize(cfg)
+        # The model judged this utterance wraps up the conversation — end the
+        # session (stash turns for lazy consolidation; next chat starts fresh).
+        if result.get("end"):
+            chatmem.park()
 
-    return {"kind": kind, "reply": reply, "via": "chat"}
+    return {"kind": kind, "reply": reply, "via": "chat", "end": bool(result.get("end"))}
