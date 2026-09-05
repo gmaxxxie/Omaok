@@ -165,6 +165,97 @@ class TestLocalFactAnswers(unittest.TestCase):
             self.assertIsNone(chat_layer.local_fact_answer(p), p)
 
 
+class TestUnifiedSinglePass(unittest.TestCase):
+    """L3+L4 merged into one model call: command / answer / defer / none."""
+
+    def _cfg(self, **ai):
+        return {"ai": {"enabled": True, **ai}, "chat": {"enabled": True}}
+
+    def test_parse_command(self):
+        from intent import ai
+        r = ai._unified_parse('{"kind": "command", "action": {"type": "open_app", "target": {"name": "微信"}, "confidence": 0.9}}')
+        self.assertEqual(r["kind"], "command")
+        self.assertEqual(r["draft"]["type"], "open_app")
+        self.assertEqual(r["draft"]["raw_target"], "微信")
+
+    def test_parse_answer_defer_none(self):
+        from intent import ai
+        r = ai._unified_parse('{"kind": "answer", "reply": "巴黎。", "end": false}')
+        self.assertEqual((r["kind"], r["reply"], r["end"]), ("answer", "巴黎。", False))
+        r = ai._unified_parse('{"kind": "defer", "reply": "深入研究量子计算", "end": true}')
+        self.assertEqual((r["kind"], r["reply"], r["end"]), ("defer", "深入研究量子计算", True))
+        r = ai._unified_parse('{"kind": "none"}')
+        self.assertEqual(r["kind"], "none")
+
+    def test_parse_rejects_unknown_or_invalid(self):
+        from intent import ai
+        self.assertIsNone(ai._unified_parse("not json"))
+        self.assertIsNone(ai._unified_parse('{"kind": "command", "action": {"type": "nope"}}'))
+        self.assertIsNone(ai._unified_parse('{"kind": "command"}'))
+        self.assertIsNone(ai._unified_parse('{"kind": "answer", "reply": ""}'))
+        self.assertIsNone(ai._unified_parse('{"kind": "bogus"}'))
+
+    def test_unified_entry_mocks_model(self):
+        from intent import ai
+        with mock.patch.object(ai, "_backend_text", return_value='{"kind": "command", "action": {"type": "volume_up", "target": {}, "confidence": 0.9}}') as bt:
+            r = ai.unified("把声音调大", self._cfg())
+        self.assertEqual(r["kind"], "command")
+        self.assertEqual(r["draft"]["type"], "volume_up")
+        self.assertIn("把声音调大", bt.call_args[0][0])  # prompt carries the transcript
+
+    def test_unified_short_or_disabled(self):
+        from intent import ai
+        self.assertIsNone(ai.unified(" ", self._cfg()))
+        self.assertIsNone(ai.unified("hi", self._cfg(enabled=False)))
+
+    def test_unified_model_failure_is_none(self):
+        from intent import ai
+        with mock.patch.object(ai, "_backend_text", side_effect=ai.AIError("boom")):
+            self.assertIsNone(ai.unified("hi there", self._cfg()))
+
+    def test_cli_command_branch_awaits_confirm(self):
+        # A unified command draft still passes the full resolver + policy gate.
+        import cli as cli_mod
+        import state as state_mod
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": tmp}, clear=False):
+                with mock.patch.object(cli_mod, "raw_duration_seconds", return_value=1.0):
+                    with mock.patch.object(cli_mod.stt, "transcribe", return_value="please lock the workstation now"):
+                        with mock.patch.object(cli_mod.intent_rules, "parse", return_value=None):
+                            with mock.patch.object(cli_mod.intent_ai, "unified", return_value={
+                                "kind": "command", "draft": {
+                                    "type": "lock_screen", "target": {}, "confidence": 0.8,
+                                    "source": "future_llm", "risk": "low",
+                                }}), mock.patch.object(cli_mod.executor, "execute") as exec_:
+                                cli_mod.cmd_record_start()
+                                cli_mod.cmd_record_stop()
+                                exec_.assert_not_called()
+                            st = state_mod.load_state()
+        self.assertEqual(st["phase"], "awaiting_confirm")
+        self.assertEqual(st["action"]["type"], "lock_screen")
+
+    def test_cli_answer_branch_never_executes(self):
+        import cli as cli_mod
+        import state as state_mod
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": tmp}, clear=False):
+                with mock.patch.object(cli_mod, "raw_duration_seconds", return_value=1.0):
+                    with mock.patch.object(cli_mod.stt, "transcribe", return_value="法国的首都"):
+                        with mock.patch.object(cli_mod.intent_rules, "parse", return_value=None):
+                            with mock.patch.object(cli_mod.intent_ai, "unified", return_value={
+                                "kind": "answer", "reply": "巴黎。", "end": False}), \
+                                    mock.patch.object(cli_mod.executor, "execute") as exec_:
+                                cli_mod.cmd_record_start()
+                                cli_mod.cmd_record_stop()
+                                exec_.assert_not_called()
+                            st = state_mod.load_state()
+        self.assertEqual(st["phase"], "chat_reply")
+        self.assertEqual(st["chat_reply"], "巴黎。")
+        self.assertIsNone(st["action"])
+
+
 class TestPrecheckOffline(unittest.TestCase):
     def test_persona_offline(self):
         with mock.patch.object(chat_layer, "_note") as note:

@@ -236,6 +236,42 @@ def _handle_explicit(cmd, cfg):
     return None
 
 
+def prepare_context(text: str, cfg: dict) -> dict:
+    """Ensure an active session (rollover + lazy consolidation) and return the
+    context dict the model needs: {summary, turns, facts}. Called once per
+    chat-ish utterance, before the model call — pure + fast except for the rare
+    lazy consolidation (only when a previous thread has pending turns)."""
+    s = chatmem.load_session()
+    if chatmem.should_rollover(s):
+        _rollover(cfg)
+        s = chatmem.load_session()
+    if not s.get("active"):
+        s = chatmem.start_session()
+    facts = chatmem.load_facts()
+    relevant = chatmem.retrieve(text, facts) if facts else []
+    return {
+        "summary": s.get("summary", ""),
+        "turns": chatmem.recent_turns(s),
+        "facts": [f["text"] for f in relevant],
+    }
+
+
+def persist_turn(text: str, reply: str, end: bool, cfg: dict) -> None:
+    """Persist a real chat turn + rolling summary; park the session when the
+    model judged the conversation has wrapped up (end=true)."""
+    if not reply:
+        return
+    s = chatmem.load_session()
+    if not s.get("active"):
+        s = chatmem.start_session()
+    chatmem.append_turn(s, "user", text)
+    chatmem.append_turn(s, "assistant", reply)
+    chatmem.save_session(s)
+    _maybe_summarize(cfg)
+    if end:
+        chatmem.park()
+
+
 def process(text: str, cfg: dict):
     """Handle one chat utterance. Returns {kind, reply, via} or None.
     kind: answer | defer | none | (via=memory handled as answer). Never raises."""
@@ -249,40 +285,16 @@ def process(text: str, cfg: dict):
     if pre is not None:
         return pre
 
-    # 2) session rollover + lazy consolidation, ensure an active thread
-    s = chatmem.load_session()
-    if chatmem.should_rollover(s):
-        _rollover(cfg)
-        s = chatmem.load_session()
-    if not s.get("active"):
-        s = chatmem.start_session()
-
-    # 3) long-term retrieval
-    facts = chatmem.load_facts()
-    relevant = chatmem.retrieve(text, facts) if facts else []
-
-    # 4) model reply with context
-    context = {
-        "summary": s.get("summary", ""),
-        "turns": chatmem.recent_turns(s),
-        "facts": [f["text"] for f in relevant],
-    }
+    # Model path with context (rollover + long-term retrieval).
+    context = prepare_context(text, cfg)
     result = intent_ai.chat_analyze(text, cfg, context=context)
     if result is None:
         return None
     kind = result.get("kind")
     reply = (result.get("reply") or "").strip()
 
-    # 5) persist real turns; skip none/noise
+    # Persist real turns; skip none/noise.
     if kind in ("answer", "defer") and reply:
-        s = chatmem.load_session()
-        chatmem.append_turn(s, "user", text)
-        chatmem.append_turn(s, "assistant", reply)
-        chatmem.save_session(s)
-        _maybe_summarize(cfg)
-        # The model judged this utterance wraps up the conversation — end the
-        # session (stash turns for lazy consolidation; next chat starts fresh).
-        if result.get("end"):
-            chatmem.park()
+        persist_turn(text, reply, bool(result.get("end")), cfg)
 
     return {"kind": kind, "reply": reply, "via": "chat", "end": bool(result.get("end"))}

@@ -108,10 +108,10 @@ class TestStateMachine(unittest.TestCase):
         self.assertEqual(state_mod.load_state()["phase"], "idle")
 
     def test_unknown_phrase_never_executes(self):
-        # The chat fallback is also mocked to None so this stays a pure
+        # The AI path is also mocked to None so this stays a pure
         # "unknown phrase must never execute" invariant test (chat handling is
         # covered separately in test_model_picker/test chat fallback).
-        with mock.patch.object(cli_mod.intent_ai, "chat_analyze", return_value=None):
+        with mock.patch.object(cli_mod.intent_ai, "unified", return_value=None):
             self._set_transcript("今天天气怎么样")
             cli_mod.cmd_record_start()
             cli_mod.cmd_record_stop()
@@ -144,13 +144,13 @@ class TestStateMachine(unittest.TestCase):
 
     def test_general_chat_still_uses_model(self):
         # Non-identity questions must NOT be short-circuited: the model still
-        # classifies them (answer/defer/none).
-        with mock.patch.object(cli_mod.intent_ai, "chat_analyze",
-                               return_value={"kind": "answer", "reply": "巴黎是法国首都"}) as ca:
+        # classifies them via the single unified call (answer/defer/none).
+        with mock.patch.object(cli_mod.intent_ai, "unified",
+                               return_value={"kind": "answer", "reply": "巴黎是法国首都"}) as uni:
             self._set_transcript("法国的首都")
             cli_mod.cmd_record_start()
             cli_mod.cmd_record_stop()
-            ca.assert_called_once()
+            uni.assert_called_once()
         st = state_mod.load_state()
         self.assertEqual(st["phase"], "chat_reply")
         self.assertEqual(st["chat_reply"], "巴黎是法国首都")

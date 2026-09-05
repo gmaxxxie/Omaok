@@ -146,7 +146,7 @@ class TestCliAiPath(unittest.TestCase):
 
     def test_rule_hit_does_not_call_ai(self):
         self.cli.stt.transcribe.return_value = "打开浏览器"  # rule matcher handles this
-        with mock.patch.object(self.cli.intent_ai, "analyze") as ai, \
+        with mock.patch.object(self.cli.intent_ai, "unified") as ai, \
                 mock.patch.object(self.cli.executor, "execute", return_value=(True, "ok")) as exec_:
             self.cli.cmd_record_start()
             self.cli.cmd_record_stop()
@@ -157,9 +157,11 @@ class TestCliAiPath(unittest.TestCase):
 
     def test_rule_miss_calls_ai_and_awaits_confirm(self):
         self.cli.stt.transcribe.return_value = "organize my downloads folder"  # genuine rule miss
-        with mock.patch.object(self.cli.intent_ai, "analyze", return_value={
-            "type": "lock_screen", "target": {}, "confidence": 0.8,
-            "source": "future_llm", "risk": "low",
+        with mock.patch.object(self.cli.intent_ai, "unified", return_value={
+            "kind": "command", "draft": {
+                "type": "lock_screen", "target": {}, "confidence": 0.8,
+                "source": "future_llm", "risk": "low",
+            },
         }), mock.patch.object(self.cli.executor, "execute") as exec_:
             self.cli.cmd_record_start()
             self.cli.cmd_record_stop()
@@ -171,9 +173,11 @@ class TestCliAiPath(unittest.TestCase):
 
     def test_ai_low_risk_auto_executes(self):
         self.cli.stt.transcribe.return_value = "organize my downloads folder"
-        with mock.patch.object(self.cli.intent_ai, "analyze", return_value={
-            "type": "open_folder", "raw_target": "downloads", "confidence": 0.8,
-            "source": "future_llm", "risk": "low",
+        with mock.patch.object(self.cli.intent_ai, "unified", return_value={
+            "kind": "command", "draft": {
+                "type": "open_folder", "raw_target": "downloads", "confidence": 0.8,
+                "source": "future_llm", "risk": "low",
+            },
         }), mock.patch.object(self.cli.executor, "execute", return_value=(True, "ok")) as exec_:
             self.cli.cmd_record_start()
             self.cli.cmd_record_stop()

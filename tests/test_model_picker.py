@@ -244,19 +244,22 @@ class TestChatFallback(unittest.TestCase):
     handoff (chat_defer); neither ever executes an action."""
 
     def _run(self, transcript, chat_result=None):
+        import os
+        import tempfile
         import state as state_mod
         import cli as cli_mod
         state_mod.load_state()
-        with mock.patch.object(cli_mod.stt, "transcribe", return_value=transcript):
-            with mock.patch.object(cli_mod.intent_rules, "parse", return_value=None):
-                with mock.patch.object(cli_mod.intent_ai, "analyze", return_value=None):
-                    with mock.patch.object(cli_mod.intent_ai, "chat_analyze", return_value=chat_result) as ca:
-                        cli_mod._process_transcript(
-                            state_mod.load_state(),
-                            cli_mod.settings.load_config(),
-                            cli_mod.settings.load_aliases(),
-                        )
-                        return state_mod.load_state(), ca
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": tmp}, clear=False):
+                with mock.patch.object(cli_mod.stt, "transcribe", return_value=transcript):
+                    with mock.patch.object(cli_mod.intent_rules, "parse", return_value=None):
+                        with mock.patch.object(cli_mod.intent_ai, "unified", return_value=chat_result) as uni:
+                            cli_mod._process_transcript(
+                                state_mod.load_state(),
+                                cli_mod.settings.load_config(),
+                                cli_mod.settings.load_aliases(),
+                            )
+                            return state_mod.load_state(), uni
 
     def test_simple_question_gets_answer(self):
         st, ca = self._run("法国的首都是哪里", {"kind": "answer", "reply": "巴黎。"})
@@ -279,13 +282,12 @@ class TestChatFallback(unittest.TestCase):
         with mock.patch.object(cli_mod.settings, "load_config", return_value=cfg):
             with mock.patch.object(cli_mod.stt, "transcribe", return_value="随便说的"):
                 with mock.patch.object(cli_mod.intent_rules, "parse", return_value=None):
-                    with mock.patch.object(cli_mod.intent_ai, "analyze", return_value=None):
-                        with mock.patch.object(cli_mod.intent_ai, "chat_analyze") as ca:
-                            cli_mod._process_transcript(
-                                state_mod.load_state(), cfg,
-                                cli_mod.settings.load_aliases(),
-                            )
-                            ca.assert_not_called()
+                    with mock.patch.object(cli_mod.intent_ai, "unified") as uni:
+                        cli_mod._process_transcript(
+                            state_mod.load_state(), cfg,
+                            cli_mod.settings.load_aliases(),
+                        )
+                        uni.assert_not_called()
         st = state_mod.load_state()
         self.assertEqual(st["phase"], "idle")
         self.assertIn("understand", st["error"])

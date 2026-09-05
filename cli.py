@@ -148,6 +148,7 @@ def _process_transcript(st: dict, cfg: dict, aliases: dict) -> None:
                 st["chat_defer"] = pre["reply"]
                 st["chat_reply"] = ""
                 st["error"] = ""
+                st["action"] = None
                 write_state(st)
                 audit("chat defer: %r" % pre["reply"])
                 return
@@ -156,6 +157,7 @@ def _process_transcript(st: dict, cfg: dict, aliases: dict) -> None:
                 st["chat_reply"] = pre["reply"]
                 st["chat_defer"] = ""
                 st["error"] = ""
+                st["action"] = None
                 write_state(st)
                 audit("chat reply (%s): %r" % (pre.get("via", "chat"), pre["reply"]))
                 if pre.get("mode"):
@@ -166,61 +168,69 @@ def _process_transcript(st: dict, cfg: dict, aliases: dict) -> None:
                 st["chat_reply"] = ""
                 st["chat_defer"] = ""
                 st["error"] = ""
+                st["action"] = None
                 write_state(st)
                 audit("chat none (ignored)")
                 return
 
-    # L3) AI-intent commands: novel phrasing the rules don't cover.
+    # L3+L4) Single unified model call — one model inference decides between a
+    #        desktop command (command) and a chat reply / AI-tool handoff /
+    #        noise (answer / defer / none). Previously a non-command paid TWO
+    #        model calls (intent, then chat) ≈ 6-8s; now it pays ONE ≈ 3-5s.
+    #        The command branch still passes the full resolver + policy + confirm
+    #        gate below before anything executes. (chat disabled or too-short
+    #        transcripts use the command-only AI path.)
     if action is None:
-        ai_draft = intent_ai.analyze(text, cfg)
-        if ai_draft is not None:
-            source = "future_llm"
-            draft = ai_draft
-            action = resolver.resolve_action(dict(draft), cfg, aliases)
-
-    # L4/L5) Not a command: chat fallback. L4 answers inline (chat_reply); L5
-    #        defers complex/open topics to the AI tool (chat_defer) — the LAST
-    #        resort. Skip when the transcript is too short to be meaningful
-    #        (pure noise / punctuation from a poor capture) — don't burn a
-    #        model call on it. (precheck already handled persona/memory/closing/
-    #        time/date/battery before L3, so process()'s offline steps are no-ops.)
-    if action is None and len(_chattext) >= 2 and (cfg.get("chat") or {}).get("enabled", True):
-        # L4: long conversation + short/long-term memory. The chat layer handles
-        # persona offline answers, explicit memory commands (remember/forget/
-        # recall/end), session rollover + lazy consolidation into long-term
-        # facts, long-term retrieval, and the context-aware model reply.
-        from intent import chat as chat_layer
-        result = chat_layer.process(text, cfg)
-        if result is None:
-            pass  # model disabled/failed -> fall through to "could not understand"
-        elif result.get("kind") == "defer" and result.get("reply"):
-            st["phase"] = "chat_defer"
-            st["chat_defer"] = result["reply"]
-            st["chat_reply"] = ""
-            st["error"] = ""
-            write_state(st)
-            audit("chat defer: %r" % result["reply"])
-            return
-        elif result.get("kind") == "answer" and result.get("reply"):
-            st["phase"] = "chat_reply"
-            st["chat_reply"] = result["reply"]
-            st["chat_defer"] = ""
-            st["error"] = ""
-            write_state(st)
-            audit("chat reply (%s): %r" % (result.get("via", "chat"), result["reply"]))
-            # A conversation-mode directive (chatmode on/off) from the chat layer.
-            if result.get("mode"):
-                cmd_chatmode([result["mode"]])
-            return
-        elif result.get("kind") == "none":
-            # noise / greeting — stay idle quietly, no error, no state churn.
-            st["phase"] = "idle"
-            st["chat_reply"] = ""
-            st["chat_defer"] = ""
-            st["error"] = ""
-            write_state(st)
-            audit("chat none (ignored)")
-            return
+        _chat_on = (cfg.get("chat") or {}).get("enabled", True)
+        if _chat_on and len(_chattext) >= 2:
+            from intent import chat as chat_layer
+            context = chat_layer.prepare_context(text, cfg)
+            res = intent_ai.unified(text, cfg, context=context)
+            if res is not None:
+                kind = res.get("kind")
+                if kind == "command" and res.get("draft"):
+                    source = "future_llm"
+                    draft = res["draft"]
+                    action = resolver.resolve_action(dict(draft), cfg, aliases)
+                    # Unresolvable command target -> action stays None, falls
+                    # through to "could not understand" (nothing executes).
+                elif kind == "answer" and res.get("reply"):
+                    chat_layer.persist_turn(text, res["reply"], bool(res.get("end")), cfg)
+                    st["phase"] = "chat_reply"
+                    st["chat_reply"] = res["reply"]
+                    st["chat_defer"] = ""
+                    st["error"] = ""
+                    st["action"] = None
+                    write_state(st)
+                    audit("chat reply (unified): %r" % res["reply"])
+                    return
+                elif kind == "defer" and res.get("reply"):
+                    chat_layer.persist_turn(text, res["reply"], bool(res.get("end")), cfg)
+                    st["phase"] = "chat_defer"
+                    st["chat_defer"] = res["reply"]
+                    st["chat_reply"] = ""
+                    st["error"] = ""
+                    st["action"] = None
+                    write_state(st)
+                    audit("chat defer: %r" % res["reply"])
+                    return
+                elif kind == "none":
+                    st["phase"] = "idle"
+                    st["chat_reply"] = ""
+                    st["chat_defer"] = ""
+                    st["error"] = ""
+                    st["action"] = None
+                    write_state(st)
+                    audit("chat none (ignored)")
+                    return
+        else:
+            # Command-only AI (chat disabled or transcript too short): a novel
+            # command the L1 rules don't cover still resolves without chat.
+            ai_draft = intent_ai.analyze(text, cfg)
+            if ai_draft is not None:
+                source = "future_llm"
+                draft = ai_draft
+                action = resolver.resolve_action(dict(draft), cfg, aliases)
 
     if action is None:
         st["phase"] = "idle"
